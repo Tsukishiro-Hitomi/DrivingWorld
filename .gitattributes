@@ -1,0 +1,3 @@
+# Preserve the exact vendored source and patch formatting.
+deps/** -whitespace
+patches/** -whitespace

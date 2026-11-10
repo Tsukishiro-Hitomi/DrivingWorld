@@ -1,0 +1,6 @@
+# Third-party components
+
+- `deps/DiffSynth-Studio/`: source snapshot used on A800, recording upstream [modelscope/DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio) revision `c458cb42ab1ee838bff85c6546e14bb01c3571e9`. Its Apache-2.0 license is preserved in `deps/DiffSynth-Studio/LICENSE`.
+- `deps/h3_runtime/h3_trajectory/`: the existing local H3 inference adapter, copied from the running project. It implements component loading, model placement, packed conditions and LoRA conversion; its recorded source revision is `e427f7d416856be7c7d3eeb0d3fd4ffa2e1fdc37`. This is a local DiffSynth-based adapter, not a claim of running the official ComfyUI CrossView workflow.
+- SAM source is downloaded separately from [facebookresearch/sam3](https://github.com/facebookresearch/sam3) at `8f0b7f4d4e7eda2ed606ebde6702c93359ad01da`. `patches/sam3-retain-prompt-memory.patch` records the modification present on A800; the upstream SAM License is preserved in `patches/SAM-LICENSE`.
+- [MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3), CrossView and Larry LoRA, Qwen and SAM checkpoints are separately distributed dependencies and retain their respective licenses. No model weights are included. H3 prompt skills refer to the official MiniMax base/Ref2VA prompt guides.

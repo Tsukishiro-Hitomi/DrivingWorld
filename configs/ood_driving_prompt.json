@@ -1,0 +1,45 @@
+{
+  "ego-lane-change": {
+    "baseline": "outputs/archive/scenario_suite_20261102/01_safe_left/generated.mp4",
+    "source": "outputs/archive/dynamic_v2v/source.mp4",
+    "warp": "outputs/archive/scenario_suite_20261102/01_safe_left/warp.mp4",
+    "baseline_metadata": "outputs/archive/scenario_suite_20261102/01_safe_left/generation.json",
+    "frames": 124,
+    "gpus": "0",
+    "trigger": true,
+    "intent": "A continuous forward dashcam edit of the supplied daytime road video. Ego slows and moves left into the neighboring lane behind the existing white hatchback, keeps a safe following gap, and continues without impact. The aligned guide moves the ego camera left between 1.5 and 3.5 seconds. Keep the dashcam facing along the road and preserve other traffic."
+  },
+  "front-car-cutin": {
+    "baseline": "outputs/archive/right_cutin_H3_camfix/generated.mp4",
+    "source": "outputs/archive/dynamic_v2v/source.mp4",
+    "warp": "outputs/archive/right_cutin_wrap_camfix/edited_warp.mp4",
+    "baseline_metadata": "outputs/archive/right_cutin_H3_camfix/generation.json",
+    "frames": 124,
+    "gpus": "0,1",
+    "trigger": true,
+    "intent": "A continuous forward dashcam edit of the supplied daytime road video. Preserve the original ego camera motion and other traffic. The existing white hatchback ahead in the lane to the left continues forward, moves right across the lane divider into the ego lane between 2.0 and 4.0 seconds, then settles ahead without collision. The aligned guide supplies the hatchback trajectory."
+  },
+  "wheelchair-cutin": {
+    "baseline": "outputs/wheelchair-cutin-H3-baseline/wheelchair_cutin.mp4",
+    "image": "outputs/archive/rabbit_cutin/inputs/reference.jpg",
+    "baseline_sha256": "2b72fac5b5f5b6ed950b0efd10c0858dfc4e1347374d6130af24052d2b5fecf7",
+    "image_sha256": "e5cf501f443322d61a930e235df5c1ec6e91049514a8170043493104269f73e4",
+    "baseline_prompt": "A single continuous photorealistic front dashcam shot starting on exactly the same sunny urban road as the reference image. Preserve the same road layout, lane markings, roadside wall, trees, white compact car and natural daylight. The camera car drives straight ahead and approaches the intersection visible farther down the road. The crossing is clear at first. As the camera car approaches the junction, around the middle of the shot, an elderly man seated in a realistic manual wheelchair suddenly rolls out from the right-hand curb ramp into the intersection and crosses the camera car's lane from right to left. He has gray hair, a dark jacket and light trousers. Show him clearly in three-quarter side profile, with his hands pushing the rims of two large side wheels, his feet resting on the footrests and the front casters rolling in continuous contact with the road. Keep him and the wheelchair consistently human-sized relative to the cars. The dashcam car brakes smoothly and yields with several meters of clearance. The wheelchair continues moving across the lane and clears it safely before the end. Keep the elderly man and wheelchair visible while crossing. One person in one wheelchair, one stable forward-facing camera, realistic road perspective, uninterrupted motion, no cuts, no zoom, no text or overlays.",
+    "frames": 175,
+    "gpus": "0,1",
+    "trigger": false,
+    "intent": "A continuous front dashcam shot matching the supplied image of a sunny urban road. Preserve the lane markings, wall, trees and white compact car. Start with a clear crossing, then around the middle of the clip one gray-haired elderly man in a dark jacket and light trousers rolls a manual wheelchair out of the right curb ramp, crosses right to left and clears the ego lane by the end. His feet stay on the footrests, his hands push the rims and his wheels stay on the road. Ego brakes and yields without collision."
+  },
+  "rabbit-cutin": {
+    "baseline": "outputs/rabbit-cutin-H3-baseline/rabbit_cutin_175f.mp4",
+    "image": "outputs/archive/rabbit_cutin/inputs/reference.jpg",
+    "baseline_sha256": "78a4e24129d9cd1c8f892c03d63686332a5919fb45074439672da15203e3a4f6",
+    "image_sha256": "e5cf501f443322d61a930e235df5c1ec6e91049514a8170043493104269f73e4",
+    "baseline_prompt": "A continuous photorealistic front dashcam driving video on the same sunny road shown in the reference image. The camera car drives forward and the existing white compact car and all other traffic continue moving naturally. Keep the same road layout, lane markings, trees, walls, vehicle appearances and daylight. At the start there is no rabbit on the roadway. At about two seconds, a single clearly visible, realistically sized light-gray rabbit emerges from the right roadside and hops diagonally from right to left across the ego lane ahead of the moving camera car. The rabbit has long upright ears, natural fur and a compact small-animal body, with realistic scale relative to the cars, believable hopping leg motion, ground contact and a soft contact shadow. The camera car eases off smoothly while continuing forward, allowing the rabbit to cross without collision. Preserve a single continuous dashcam viewpoint throughout. No cuts, no zoom, no text or graphical overlays.",
+    "frames": 175,
+    "gpus": "0,1",
+    "trigger": false,
+    "intent": "A continuous photorealistic forward dashcam shot matching the sunny road in the supplied scene image. Preserve the road layout, lane markings, trees, roadside walls, the existing white compact car and natural traffic motion. At first the lane is clear of animals. At about 2.0 seconds, one small light-gray rabbit with long upright ears emerges from the right roadside and hops diagonally right to left across the ego lane ahead. Keep its body and scale consistent, with believable hopping, ground contact and a soft contact shadow. The ego car eases off while continuing forward and the rabbit crosses without collision. The rabbit is a newly generated subject absent from the sole reference image.",
+    "ref2va_note": "For this reference inventory, define one numbered subject only: <Subject 1> is the sunny road scene, including the white compact car, in <Picture 1>. Give <Subject 1> one retention line for its visible appearance. In summary and detailed_description, refer to the new animal as 'the rabbit' without a label. The supplied still image establishes appearance and perspective. All motion is newly generated."
+  }
+}

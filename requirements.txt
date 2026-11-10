@@ -1,0 +1,26 @@
+# H3 inference environment (Python 3.10); install matching CUDA PyTorch first.
+numpy==1.26.4
+transformers==4.57.6
+huggingface_hub==0.36.2
+tokenizers==0.22.2
+peft==0.18.1
+accelerate==1.15.0
+safetensors>=0.4
+Pillow>=10
+scipy>=1.10
+imageio[ffmpeg]>=2.34
+einops>=0.8
+opencv-python-headless==4.11.0.86
+qwen-vl-utils==0.0.14
+av
+librosa
+modelscope
+ftfy==6.1.1
+pandas
+tqdm
+certifi
+# Replacement/SAM dependencies; source is prepared separately.
+timm==1.0.30
+iopath==0.1.10
+portalocker==4.4.2
+pycocotools==2.0.11

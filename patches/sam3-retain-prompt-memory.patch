@@ -1,0 +1,41 @@
+diff --git a/sam3/model/video_tracking_multiplex_demo.py b/sam3/model/video_tracking_multiplex_demo.py
+index 8afa7c2..5484315 100644
+--- a/sam3/model/video_tracking_multiplex_demo.py
++++ b/sam3/model/video_tracking_multiplex_demo.py
+@@ -2567,9 +2567,34 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
+                 if obj_out is not None:
+                     obj_output_dict["non_cond_frame_outputs"][frame_idx] = obj_out
+ 
+-            # If all the conditioning frames have been removed, we also clear the tracking outputs
++            # Later detected objects can have their real mask prompts stored in
++            # non-conditioning outputs. Removing the final older anchor must not
++            # reset those still-prompted objects and erase all their memory.
+             if len(output_dict["cond_frame_outputs"]) == 0:
+-                self._reset_tracking_results(inference_state)
++                remaining_input_frames = set()
++                for inputs in inference_state["point_inputs_per_obj"].values():
++                    remaining_input_frames.update(inputs)
++                for inputs in inference_state["mask_inputs_per_obj"].values():
++                    remaining_input_frames.update(inputs)
++                if not remaining_input_frames:
++                    self._reset_tracking_results(inference_state)
++                else:
++                    anchors = remaining_input_frames.intersection(
++                        output_dict["non_cond_frame_outputs"]
++                    )
++                    if not anchors:
++                        raise RuntimeError("Remaining object prompts have no consolidated memory outputs")
++                    for anchor in sorted(anchors):
++                        output_dict["cond_frame_outputs"][anchor] = output_dict[
++                            "non_cond_frame_outputs"
++                        ].pop(anchor)
++                        consolidated_frame_inds["non_cond_frame_outputs"].discard(anchor)
++                        consolidated_frame_inds["cond_frame_outputs"].add(anchor)
++                        for per_obj in inference_state["output_dict_per_obj"].values():
++                            if anchor in per_obj["non_cond_frame_outputs"]:
++                                per_obj["cond_frame_outputs"][anchor] = per_obj[
++                                    "non_cond_frame_outputs"
++                                ].pop(anchor)
+ 
+         if not need_output:
+             return
