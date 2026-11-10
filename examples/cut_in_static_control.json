@@ -1,0 +1,17 @@
+{
+  "duration": 6,
+  "fps": 24,
+  "camera": {"width": 832, "height": 480, "fov_degrees": 85, "position": [1.5, 0, 1.5], "yaw": 0, "pitch": 0, "roll": 0},
+  "grid": {"extent": 75, "spacing": 5},
+  "ego": [
+    {"t": 0, "position": [0, 0, 0], "yaw": 0},
+    {"t": 6, "position": [30, 0, 0], "yaw": 0}
+  ],
+  "actors": [{
+    "id": "car", "type": "vehicle", "size": [4.5, 1.8, 1.6],
+    "track": [
+      {"t": 0, "position": [15, -3.5, 0.8], "yaw": 0},
+      {"t": 6, "position": [45, -3.5, 0.8], "yaw": 0}
+    ]
+  }]
+}

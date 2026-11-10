@@ -1,0 +1,21 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Model weights and generated media
+models/
+model_cache/
+outputs/
+experiments/
+smoke-run
+datasets/**/videos/
+datasets/**/reports/
+*.mp4
+*.mov
+*.avi
+
+# Local environment files
+.env
+.venv/
+venv/

@@ -1,0 +1,21 @@
+{
+  "duration": 4.0,
+  "fps": 24,
+  "camera": {"width": 832, "height": 480, "fov_degrees": 90, "position": [1.5, 0, 1.5], "yaw": 0, "pitch": 0, "roll": 0},
+  "grid": {"extent": 60, "spacing": 5},
+  "ego": [
+    {"t": 0, "position": [0, 0, 0], "yaw": 0},
+    {"t": 4, "position": [12, 0, 0], "yaw": 0}
+  ],
+  "actors": [
+    {"id": "lead_car", "type": "vehicle", "size": [4.5, 1.8, 1.6], "track": [
+      {"t": 0, "position": [18, 0, 0.8], "yaw": 0},
+      {"t": 2, "position": [22, 0, 0.8], "yaw": 0},
+      {"t": 4, "position": [23, 0, 0.8], "yaw": 0}
+    ]},
+    {"id": "pedestrian", "type": "pedestrian", "size": [0.6, 0.6, 1.7], "track": [
+      {"t": 0, "position": [22, -5, 0.85], "yaw": 1.5708},
+      {"t": 4, "position": [22, 3, 0.85], "yaw": 1.5708}
+    ]}
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "duration": 6,
+  "fps": 24,
+  "camera": {"width": 832, "height": 480, "fov_degrees": 85, "position": [1.5, 0, 1.5], "yaw": 0, "pitch": 0, "roll": 0},
+  "grid": {"extent": 75, "spacing": 5},
+  "ego": [
+    {"t": 0, "position": [0, 0, 0], "yaw": 0},
+    {"t": 6, "position": [24, 0, 0], "yaw": 0}
+  ],
+  "actors": [
+    {"id": "lead", "type": "vehicle", "size": [4.5, 1.8, 1.6], "track": [
+      {"t": 0, "position": [30, 0, 0.8], "yaw": 0},
+      {"t": 2, "position": [40, 0, 0.8], "yaw": 0},
+      {"t": 4, "position": [48, 0, 0.8], "yaw": 0},
+      {"t": 6, "position": [54, 0, 0.8], "yaw": 0}
+    ]},
+    {"id": "cut_in", "type": "vehicle", "size": [4.3, 1.8, 1.5], "track": [
+      {"t": 0, "position": [17, -3.7, 0.75], "yaw": 0},
+      {"t": 2, "position": [27, -3.7, 0.75], "yaw": 0},
+      {"t": 3, "position": [32, -3.2, 0.75], "yaw": 0.15},
+      {"t": 4.5, "position": [39, 0, 0.75], "yaw": 0},
+      {"t": 6, "position": [46, 0, 0.75], "yaw": 0}
+    ]},
+    {"id": "pedestrian", "type": "pedestrian", "size": [0.6, 0.6, 1.7], "start": 2, "track": [
+      {"t": 2, "position": [43, -6, 0.85], "yaw": 1.5708},
+      {"t": 6, "position": [43, 2, 0.85], "yaw": 1.5708}
+    ]}
+  ]
+}
