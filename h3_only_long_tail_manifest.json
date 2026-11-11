@@ -1,0 +1,22 @@
+{
+  "experiment": "h3_only_long_tail_001",
+  "purpose": "Test whether H3 can compose multiple long-tail events from a first-frame image and text only.",
+  "reference_image": "reference_h3_only_longtail_v1.png",
+  "conditions": [
+    {
+      "id": "rain_cut_in_pedestrian_brake",
+      "seed": 301,
+      "prompt": "Realistic forward-facing dashcam footage. Within five seconds, rain begins and the road becomes wet while the camera remains fixed. The dark SUV from the right lane suddenly cuts left into the ego lane. At the same time a pedestrian in a yellow raincoat runs from the right curb into the roadway, and the white sedan directly ahead brakes sharply with red brake lights. Preserve all three actors and their distinct motions; no collision, no camera cut, no text or overlays."
+    },
+    {
+      "id": "construction_bus_cyclist_ambulance",
+      "seed": 302,
+      "prompt": "Realistic forward-facing dashcam footage on this same urban road. Approaching the overpass, temporary construction cones close the right lane. The city bus on the left merges smoothly into the ego lane, a cyclist emerges from behind the right-side cones and crosses toward the center lane, and an ambulance appears from behind with flashing blue-red lights. The ego vehicle slows gently and the camera remains fixed. Keep the bus, cyclist, cones, ambulance, lane changes, and temporal order coherent; no collision, no camera cut, no text or overlays."
+    },
+    {
+      "id": "night_glare_door_opening_dog",
+      "seed": 303,
+      "prompt": "Transform this scene into a realistic wet night dashcam sequence with oncoming headlight glare and reflections, without changing the road layout. The white sedan ahead moves one lane left to avoid a stopped delivery van in the right lane. The delivery van's rear door swings open, and a small dog runs from the right sidewalk toward the road; the ego car brakes smoothly before reaching it. Keep vehicle identity, lane positions, door motion, dog motion, wet-road reflections, and stable camera coherent for the full video. No collision, no camera cut, no text or overlays."
+    }
+  ]
+}
