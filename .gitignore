@@ -19,3 +19,6 @@ datasets/**/reports/
 .env
 .venv/
 venv/
+
+# Local agent instructions (kept on disk, not tracked)
+AGENTS.md
