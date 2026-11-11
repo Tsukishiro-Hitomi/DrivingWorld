@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, TypedDict
 
-from driving_world.contracts.events import EventSpec, EventVerdict, validate_event_spec, validate_event_verdict
+from driving_world.contracts.events import EventSpec, validate_event_spec
+from driving_world.contracts.review import EventVerdict, validate_event_verdict
 
 
 class DatasetRecord(TypedDict):

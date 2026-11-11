@@ -1,10 +1,10 @@
-"""Qwen2.5-VL adapter used by the first Event Judge baseline."""
+"""Qwen2.5-VL adapter used by the Judge baseline."""
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, Sequence
 
-from .sampling import VideoSample
+from PIL import Image
 
 
 class VisionLanguageModel(Protocol):
@@ -12,8 +12,8 @@ class VisionLanguageModel(Protocol):
 
     name: str
 
-    def answer(self, sample: VideoSample, prompt: str) -> str:
-        """Return the model's unprocessed text response."""
+    def answer(self, prompt: str, images: Sequence[tuple[str, Image.Image]]) -> str:
+        """Return the model's unprocessed text response for labeled images."""
 
 
 class Qwen25VL:
@@ -25,7 +25,7 @@ class Qwen25VL:
         self.model_path = model_path
         self.device = device
 
-    def answer(self, sample: VideoSample, prompt: str) -> str:
+    def answer(self, prompt: str, images: Sequence[tuple[str, Image.Image]]) -> str:
         import torch
         from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
@@ -37,21 +37,21 @@ class Qwen25VL:
             local_files_only=True,
         ).eval()
         content = []
-        for frame_order, frame in enumerate(sample.frames):
-            content.extend(
-                [
-                    {"type": "text", "text": f"Frame {frame_order} at {frame.timestamp_seconds:.3f}s:"},
-                    {"type": "image", "image": frame.image},
-                ]
-            )
+        for label, image in images:
+            content.append({"type": "text", "text": label})
+            content.append({"type": "image", "image": image})
         content.append({"type": "text", "text": prompt})
         text = processor.apply_chat_template(
             [{"role": "user", "content": content}],
             tokenize=False,
             add_generation_prompt=True,
         )
-        images = [frame.image for frame in sample.frames]
-        inputs = processor(text=[text], images=images, padding=True, return_tensors="pt").to(self.device)
+        image_list = [image for _, image in images]
+        inputs = processor(
+            text=[text], images=image_list, padding=True, return_tensors="pt"
+        ).to(self.device)
         with torch.inference_mode():
             output = model.generate(**inputs, max_new_tokens=768, do_sample=False)
-        return processor.batch_decode(output[:, inputs.input_ids.shape[1] :], skip_special_tokens=True)[0]
+        return processor.batch_decode(
+            output[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
+        )[0]

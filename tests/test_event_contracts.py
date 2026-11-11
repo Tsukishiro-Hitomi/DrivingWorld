@@ -1,6 +1,7 @@
 import unittest
 
-from driving_world.contracts.events import validate_event_spec, validate_event_verdict
+from driving_world.contracts.events import validate_event_spec
+from driving_world.contracts.review import validate_event_verdict
 
 
 EVENT = {
