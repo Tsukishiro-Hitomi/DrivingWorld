@@ -3,13 +3,14 @@
 Unlike the VLM checker this path measures the subject's trajectory instead of
 eyeballing frames. The proxy scene already knows every actor's 3D track and
 the camera, so we project the ground-truth track to image space, extract a
-trajectory from the video, and compare them numerically. The checks are
-interpretable and reproducible; a VLM is only needed later for the residual
-"render quality" judgement.
+trajectory from the video, and compare them numerically in world meters.
 
-Coordinate convention for the comparison is "left-positive lateral position"
-in image pixels: ``width / 2 - u``, which has the same sign as the world ``y``
-(left) axis and therefore makes ``right_to_left`` a positive displacement.
+Perspective is handled explicitly: a subject that only recedes in depth still
+appears to drift laterally on screen. We un-project the tracked image offset
+against the ground-truth depth, recovering the subject's world-lateral ``y``
+(``y_tr = y_gt + (u_gt - u_tr) * depth / focal``), so a real lane change is
+distinguished from pure perspective drift. Coordinates follow the renderer:
+world ``x`` forward, ``y`` left (positive = left), ``z`` up.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from driving_world.contracts.events import EventSpec, validate_event_spec
-from driving_world.geometry import Camera, interpolate_track, project_point
+from driving_world.geometry import Camera, camera_pose, interpolate_track
 
 
 @dataclass(frozen=True)
@@ -36,20 +37,30 @@ class Trajectory:
     def visible(self) -> np.ndarray:
         return ~np.isnan(self.points).any(axis=1)
 
-    def lateral(self, image_width: float) -> np.ndarray:
-        """Left-positive lateral position in pixels (``width / 2 - u``)."""
-        return image_width / 2.0 - self.points[:, 0]
+
+@dataclass(frozen=True)
+class GtTrack:
+    """One actor's ground-truth track projected into image and camera space."""
+
+    times: np.ndarray  # (T,)
+    image: np.ndarray  # (T, 2) in (u, v); NaN behind the near plane
+    world: np.ndarray  # (T, 3) in world (x, y, z)
+    depth: np.ndarray  # (T,) camera-frame depth
+    focal: float
+
+    def visible(self) -> np.ndarray:
+        return ~np.isnan(self.image).any(axis=1)
 
 
 @dataclass(frozen=True)
 class GroundedConfig:
-    """Pixel-space thresholds for the deterministic checks."""
+    """World-meter thresholds for the deterministic checks."""
 
-    motion_min_pixels: float = 15.0  # lateral travel that counts as motion
-    completion_max_pixels: float = 40.0  # |final lateral - target| for completion
+    motion_min_meters: float = 1.0  # lateral travel that counts as a maneuver
+    completion_max_meters: float = 1.0  # |final y - target| for completion
     timing_fraction: float = 0.6  # fraction of lateral travel inside the window
     visible_fraction: float = 0.5  # fraction of window frames with a detection
-    match_max_pixels: float = 40.0  # mean pixel error vs the GT trajectory
+    match_max_meters: float = 0.5  # mean |y_tracked - y_gt| for trajectory match
 
 
 @dataclass(frozen=True)
@@ -73,8 +84,8 @@ def _find_actor(scene: dict[str, Any], actor_id: str) -> dict[str, Any]:
     raise ValueError(f"actor {actor_id!r} not found in scene")
 
 
-def gt_trajectory(scene: dict[str, Any], actor_id: str) -> Trajectory:
-    """Project one actor's ground-truth 3D track to per-frame image points."""
+def gt_track(scene: dict[str, Any], actor_id: str) -> GtTrack:
+    """Project one actor's ground-truth 3D track to image and camera space."""
     camera = Camera.from_dict(scene["camera"])
     fps = float(scene["fps"])
     count = math.ceil(scene["duration"] * fps)
@@ -83,20 +94,32 @@ def gt_trajectory(scene: dict[str, Any], actor_id: str) -> Trajectory:
     start = actor.get("start", 0.0)
     end = actor.get("end", scene["duration"])
     times = np.arange(count, dtype=float) / fps
-    points = np.full((count, 2), np.nan)
+    image = np.full((count, 2), np.nan)
+    world = np.full((count, 3), np.nan)
+    depth = np.full((count,), np.nan)
     for index, t in enumerate(times):
         if not start <= t < end:
             continue
         ego_pos, ego_yaw = interpolate_track(ego, t)
         position, _ = interpolate_track(actor["track"], t)
-        uv = project_point(position, ego_pos, ego_yaw, camera)
-        if uv is not None:
-            points[index] = uv
-    return Trajectory(times=times, points=points, fps=fps)
+        world[index] = position
+        camera_pos, camera_rot = camera_pose(ego_pos, ego_yaw, camera)
+        p = camera_rot.T @ (position - camera_pos)
+        if p[0] >= camera.near:
+            depth[index] = p[0]
+            image[index] = (
+                camera.width / 2.0 - camera.focal * p[1] / p[0],
+                camera.height / 2.0 - camera.focal * p[2] / p[0],
+            )
+    return GtTrack(times=times, image=image, world=world, depth=depth, focal=camera.focal)
 
 
 def track_subject_by_color(
-    frames: Sequence[np.ndarray], color: Sequence[float], fps: float, *, tolerance: float = 60.0
+    frames: Sequence[np.ndarray],
+    color: Sequence[float],
+    fps: float,
+    *,
+    tolerance: float = 60.0,
 ) -> Trajectory:
     """Track a subject by matching its render color and taking the centroid."""
     target = np.asarray(color, dtype=np.float32)
@@ -127,87 +150,123 @@ def track_subject_from_video(
     return track_subject_by_color(frames, color, fps, tolerance=tolerance)
 
 
+def _world_lateral(tracked: Trajectory, gt: GtTrack) -> np.ndarray:
+    """Depth-corrected world-lateral ``y`` of the tracked subject (meters)."""
+    y_gt = gt.world[:, 1]
+    u_gt = gt.image[:, 0]
+    u_tr = tracked.points[:, 0]
+    y_tr = np.full_like(y_gt, np.nan)
+    common = gt.visible() & tracked.visible()
+    y_tr[common] = y_gt[common] + (u_gt[common] - u_tr[common]) * gt.depth[common] / gt.focal
+    return y_tr
+
+
 def evaluate(
     tracked: Trajectory,
     event: EventSpec,
-    image_width: float,
+    gt: GtTrack,
     *,
-    gt: Trajectory | None = None,
     config: GroundedConfig = GroundedConfig(),
 ) -> GroundedResult:
-    """Compare a tracked trajectory against the event spec (and optional GT)."""
+    """Compare a tracked trajectory against the event spec and the GT track."""
     event = validate_event_spec(event)
     start, end = event["time_window_seconds"]
-    times = tracked.times
+    n = min(len(tracked.times), len(gt.times))
+    times = tracked.times[:n]
+    tracked_visible = tracked.visible()[:n]
     window_mask = (times >= start) & (times <= end)
-    visible = tracked.visible()
 
     subject_visible = bool(
-        window_mask.any() and visible[window_mask].mean() >= config.visible_fraction
+        window_mask.any() and tracked_visible[window_mask].mean() >= config.visible_fraction
     )
 
-    lateral = tracked.lateral(image_width)
-    net = float(lateral[-1] - lateral[0])
+    y_tr = _world_lateral(tracked, gt)[:n]
+    y_gt = gt.world[:n, 1]
+    common = gt.visible()[:n] & tracked_visible & window_mask
+    mean_gt_error_m = (
+        float(np.abs(y_tr[common] - y_gt[common]).mean()) if common.sum() else float("nan")
+    )
 
+    valid = ~np.isnan(y_tr)
+    valid_indices = np.nonzero(valid)[0]
     metrics: dict[str, float] = {
-        "lateral_start_px": float(lateral[0]) if visible[0] else float("nan"),
-        "lateral_end_px": float(lateral[-1]) if visible[-1] else float("nan"),
-        "net_lateral_px": net,
+        "mean_gt_error_m": mean_gt_error_m,
         "subject_visible_fraction": (
-            float(visible[window_mask].mean()) if window_mask.any() else 0.0
+            float(tracked_visible[window_mask].mean()) if window_mask.any() else 0.0
         ),
-        "mean_gt_error_px": _mean_gt_error(tracked, gt, window_mask),
     }
 
     if not subject_visible:
-        checks = {
-            "subject_visible": False,
-            "motion_observed": None,
-            "direction_correct": None,
-            "timing_valid": None,
-            "event_completed": None,
-            "matches_proxy_trajectory": _trajectory_match(tracked, gt, window_mask, config),
-        }
         return GroundedResult(
             event_id=event["event_id"],
             status="not_observed",
-            checks=checks,
+            checks={
+                "subject_visible": False,
+                "motion_observed": None,
+                "direction_correct": None,
+                "timing_valid": None,
+                "event_completed": None,
+                "matches_proxy_trajectory": _match(mean_gt_error_m, config),
+            },
             metrics=metrics,
             rationale="Subject was not detected in the event window.",
         )
 
-    # Lateral motion: per-frame travel and the fraction occurring in-window.
-    deltas = np.diff(lateral)
+    if valid_indices.size < 2:
+        return GroundedResult(
+            event_id=event["event_id"],
+            status="not_observed",
+            checks={
+                "subject_visible": True,
+                "motion_observed": None,
+                "direction_correct": None,
+                "timing_valid": None,
+                "event_completed": None,
+                "matches_proxy_trajectory": _match(mean_gt_error_m, config),
+            },
+            metrics=metrics,
+            rationale="Too few detected frames to measure lateral motion.",
+        )
+
+    y_valid = y_tr[valid]
+    t_valid = times[valid]
+    deltas = np.diff(y_valid)
     abs_deltas = np.abs(deltas)
-    mid_times = (times[:-1] + times[1:]) / 2.0
+    mid_times = (t_valid[:-1] + t_valid[1:]) / 2.0
     in_window = (mid_times >= start) & (mid_times <= end)
     total_travel = float(abs_deltas.sum())
     window_travel = float(abs_deltas[in_window].sum())
-    motion_observed = total_travel >= config.motion_min_pixels
-    metrics["lateral_travel_total_px"] = total_travel
-    metrics["lateral_travel_window_px"] = window_travel
-    metrics["window_travel_fraction"] = (
-        window_travel / total_travel if total_travel > 0 else 0.0
+
+    first, last = valid_indices[0], valid_indices[-1]
+    net = float(y_tr[last] - y_tr[first])
+    motion_observed = total_travel >= config.motion_min_meters
+
+    metrics.update(
+        {
+            "world_lateral_start_m": float(y_tr[first]),
+            "world_lateral_end_m": float(y_tr[last]),
+            "net_lateral_m": net,
+            "lateral_travel_total_m": total_travel,
+            "lateral_travel_window_m": window_travel,
+            "window_travel_fraction": (
+                window_travel / total_travel if total_travel > 0 else 0.0
+            ),
+        }
     )
 
     direction_correct: bool | None = None
     timing_valid: bool | None = None
     if motion_observed:
         direction = event.get("direction")
-        if direction is not None and abs(net) >= config.motion_min_pixels:
+        if direction is not None and abs(net) >= config.motion_min_meters:
             expected_sign = 1.0 if direction == "right_to_left" else -1.0
             direction_correct = bool(net * expected_sign > 0)
-        timing_valid = bool(
-            window_travel / total_travel >= config.timing_fraction
-        )
+        timing_valid = bool(window_travel / total_travel >= config.timing_fraction)
 
-    # Completion: the subject reached the target lane (center for ego_lane).
-    target_lateral = 0.0
-    event_completed = bool(
-        visible[-1] and abs(lateral[-1] - target_lateral) <= config.completion_max_pixels
-    )
+    target_y = 0.0  # ego_lane center for a lane change
+    event_completed = bool(abs(y_tr[last] - target_y) <= config.completion_max_meters)
 
-    matches = _trajectory_match(tracked, gt, window_mask, config)
+    matches = _match(mean_gt_error_m, config)
     checks = {
         "subject_visible": True,
         "motion_observed": motion_observed,
@@ -238,26 +297,7 @@ def evaluate(
     )
 
 
-def _trajectory_match(
-    tracked: Trajectory,
-    gt: Trajectory | None,
-    window_mask: np.ndarray,
-    config: GroundedConfig,
-) -> bool | None:
-    """Mean pixel error between tracked and GT points inside the window."""
-    error = _mean_gt_error(tracked, gt, window_mask)
-    if error is None:
+def _match(mean_gt_error_m: float, config: GroundedConfig) -> bool | None:
+    if math.isnan(mean_gt_error_m):
         return None
-    return bool(error <= config.match_max_pixels)
-
-
-def _mean_gt_error(
-    tracked: Trajectory, gt: Trajectory | None, window_mask: np.ndarray
-) -> float | None:
-    if gt is None:
-        return None
-    common = tracked.visible() & gt.visible() & window_mask
-    if common.sum() < 2:
-        return None
-    error = np.linalg.norm(tracked.points[common] - gt.points[common], axis=1)
-    return float(error.mean())
+    return bool(mean_gt_error_m <= config.match_max_meters)

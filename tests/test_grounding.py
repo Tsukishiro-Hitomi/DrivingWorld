@@ -5,33 +5,14 @@ from __future__ import annotations
 import numpy as np
 
 from driving_world.judge.grounding import (
-    GroundedConfig,
+    GtTrack,
     Trajectory,
     evaluate,
-    gt_trajectory,
+    gt_track,
     track_subject_by_color,
 )
 
 FPS = 24.0
-WIDTH = 832.0
-
-
-def _trajectory(times: np.ndarray, lateral_px: np.ndarray) -> Trajectory:
-    points = np.column_stack(
-        [WIDTH / 2.0 - np.asarray(lateral_px), np.full(len(times), 240.0)]
-    )
-    return Trajectory(times=np.asarray(times), points=points, fps=FPS)
-
-
-def _lateral(times: np.ndarray, segments: list[tuple[float, float]]) -> np.ndarray:
-    """Piecewise-linear lateral position: segments are (time, value) keyframes."""
-    result = np.interp(
-        times,
-        [t for t, _ in segments],
-        [v for _, v in segments],
-    )
-    return result
-
 
 EVENT = {
     "event_id": "lane_change_test",
@@ -42,49 +23,16 @@ EVENT = {
     "target": "ego_lane",
 }
 
-_TIMES = np.arange(0.0, 5.0 + 1e-6, 1.0 / FPS)  # 121 samples
 
+def _scene(y_keyframes: list[tuple[float, float]]) -> dict:
+    """A lane-change scene whose actor follows the given (time, world-y) keyframes.
 
-def test_observed():
-    lateral = _lateral(_TIMES, [(0, -42), (2, -42), (4, 0), (5, 0)])
-    result = evaluate(_trajectory(_TIMES, lateral), EVENT, WIDTH)
-    assert result.status == "observed"
-    assert result.checks["subject_visible"] is True
-    assert result.checks["motion_observed"] is True
-    assert result.checks["direction_correct"] is True
-    assert result.checks["timing_valid"] is True
-    assert result.checks["event_completed"] is True
-
-
-def test_no_motion():
-    lateral = _lateral(_TIMES, [(0, -42), (5, -42)])
-    result = evaluate(_trajectory(_TIMES, lateral), EVENT, WIDTH)
-    assert result.status == "not_observed"
-    assert result.checks["subject_visible"] is True
-    assert result.checks["motion_observed"] is False
-    assert result.checks["direction_correct"] is None
-
-
-def test_wrong_direction():
-    lateral = _lateral(_TIMES, [(0, 42), (2, 42), (4, 0), (5, 0)])
-    result = evaluate(_trajectory(_TIMES, lateral), EVENT, WIDTH)
-    assert result.status == "partially_observed"
-    assert result.checks["direction_correct"] is False
-    assert result.checks["timing_valid"] is True
-    assert result.checks["event_completed"] is True
-
-
-def test_wrong_timing():
-    lateral = _lateral(_TIMES, [(0, -42), (3.6, -42), (4.9, 0), (5, 0)])
-    result = evaluate(_trajectory(_TIMES, lateral), EVENT, WIDTH)
-    assert result.status == "partially_observed"
-    assert result.checks["direction_correct"] is True
-    assert result.checks["timing_valid"] is False
-    assert result.checks["event_completed"] is True
-
-
-def test_gt_trajectory_projects_lane_change():
-    scene = {
+    The actor and ego both drive forward, so the actor recedes slightly in depth;
+    this reproduces the perspective drift that naive pixel-lateral checks confuse
+    with a real lane change.
+    """
+    track = [{"t": t, "position": [20 + 6 * t, y, 0.8], "yaw": 0.0} for t, y in y_keyframes]
+    return {
         "duration": 5.0,
         "fps": 24,
         "camera": {
@@ -98,34 +46,69 @@ def test_gt_trajectory_projects_lane_change():
         },
         "ego": [
             {"t": 0, "position": [0, 0, 0], "yaw": 0},
-            {"t": 5.0, "position": [25.0, 0, 0], "yaw": 0},
+            {"t": 5.0, "position": [25, 0, 0], "yaw": 0},
         ],
         "actors": [
-            {
-                "id": "target_vehicle",
-                "type": "vehicle",
-                "size": [4.5, 1.8, 1.6],
-                "track": [
-                    {"t": 0, "position": [20, -3.5, 0.8], "yaw": 0},
-                    {"t": 2.0, "position": [32.0, -3.5, 0.8], "yaw": 0},
-                    {"t": 4.0, "position": [44.0, 0.0, 0.8], "yaw": 0},
-                    {"t": 5, "position": [50, 0.0, 0.8], "yaw": 0},
-                ],
-            }
+            {"id": "target_vehicle", "type": "vehicle", "size": [4.5, 1.8, 1.6], "track": track}
         ],
     }
-    gt = gt_trajectory(scene, "target_vehicle")
-    lateral = gt.lateral(WIDTH)
-    # The vehicle starts right (negative lateral) and ends centered (lateral ~0).
-    assert lateral[0] < -30
-    assert abs(lateral[-1]) < 5
-    # GT is fully visible in front of the camera across the clip.
+
+
+def _perfect_tracked(gt: GtTrack) -> Trajectory:
+    """A tracked trajectory that exactly matches the GT (a faithful render)."""
+    return Trajectory(times=gt.times.copy(), points=gt.image.copy(), fps=FPS)
+
+
+def _run(y_keyframes):
+    gt = gt_track(_scene(y_keyframes), "target_vehicle")
+    return evaluate(_perfect_tracked(gt), EVENT, gt)
+
+
+def test_observed():
+    result = _run([(0, -3.5), (2, -3.5), (4, 0.0), (5, 0.0)])
+    assert result.status == "observed"
+    assert result.checks == {
+        "subject_visible": True,
+        "motion_observed": True,
+        "direction_correct": True,
+        "timing_valid": True,
+        "event_completed": True,
+        "matches_proxy_trajectory": True,
+    }
+
+
+def test_no_motion():
+    # Constant world-y: perspective drift must not be read as a lane change.
+    result = _run([(0, -3.5), (5, -3.5)])
+    assert result.status == "not_observed"
+    assert result.checks["subject_visible"] is True
+    assert result.checks["motion_observed"] is False
+
+
+def test_wrong_direction():
+    result = _run([(0, 3.5), (2, 3.5), (4, 0.0), (5, 0.0)])
+    assert result.status == "partially_observed"
+    assert result.checks["direction_correct"] is False
+    assert result.checks["timing_valid"] is True
+
+
+def test_wrong_timing():
+    result = _run([(0, -3.5), (3.6, -3.5), (4.9, 0.0), (5, 0.0)])
+    assert result.status == "partially_observed"
+    assert result.checks["direction_correct"] is True
+    assert result.checks["timing_valid"] is False
+
+
+def test_gt_track_exposes_world_and_depth():
+    gt = gt_track(_scene([(0, -3.5), (5, -3.5)]), "target_vehicle")
+    assert gt.world.shape[1] == 3
     assert gt.visible().all()
+    # The subject stays in the right lane (negative world-y) the whole clip.
+    assert (gt.world[:, 1] < -3.0).all()
 
 
 def test_track_subject_by_color_recovers_centroid():
     frame = np.zeros((480, 832, 3), dtype=np.uint8)
-    # A blue patch (proxy vehicle color) around (u, v) = (200, 300).
     frame[290:310, 190:210] = (65, 166, 255)
     tracked = track_subject_by_color([frame], (65, 166, 255), fps=FPS)
     assert np.allclose(tracked.points[0], [200.0, 300.0], atol=1.0)

@@ -3,9 +3,10 @@
 from .grounding import (
     GroundedConfig,
     GroundedResult,
+    GtTrack,
     Trajectory,
     evaluate,
-    gt_trajectory,
+    gt_track,
     track_subject_by_color,
     track_subject_from_video,
 )
@@ -16,9 +17,10 @@ __all__ = [
     "write_result",
     "GroundedConfig",
     "GroundedResult",
+    "GtTrack",
     "Trajectory",
     "evaluate",
-    "gt_trajectory",
+    "gt_track",
     "track_subject_by_color",
     "track_subject_from_video",
 ]
