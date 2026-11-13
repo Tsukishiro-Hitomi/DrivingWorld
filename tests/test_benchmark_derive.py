@@ -57,6 +57,12 @@ def test_slow_drift_ignored():
     assert derive_events([world]) == []
 
 
+def test_single_point_track_ignored():
+    times = np.array([1.0])
+    world = _world_track("v1", VEHICLE, times, np.array([20.0]), np.array([0.0]))
+    assert derive_events([world]) == []
+
+
 def test_pedestrian_crossing_detected():
     times = np.arange(0, 8, 0.1)
     ys = _interp(times, 2.0, 4.0, 4.0, 0.0)  # intrudes ego lane (|y|<1.5)

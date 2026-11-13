@@ -84,7 +84,7 @@ def _visible(world: WorldTrack, config: DeriveConfig) -> bool:
 
 
 def lane_change_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
-    if world.type not in (VEHICLE, CYCLIST) or not _visible(world, config):
+    if world.type not in (VEHICLE, CYCLIST) or len(world.ys) < 3 or not _visible(world, config):
         return []
     ys = _smooth(world.ys, config.smooth_window)
     span = _interior_span(ys, config.lane_displacement_m)
@@ -111,7 +111,7 @@ def lane_change_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
 
 
 def pedestrian_crossing_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
-    if world.type != PEDESTRIAN or not _visible(world, config):
+    if world.type != PEDESTRIAN or len(world.ys) < 2 or not _visible(world, config):
         return []
     ys = _smooth(world.ys, config.smooth_window)
     ahead = (world.xs > config.min_ahead_m) & (world.xs < config.crossing_max_ahead_m)
@@ -135,7 +135,7 @@ def pedestrian_crossing_events(world: WorldTrack, config: DeriveConfig) -> list[
 
 
 def hard_brake_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
-    if world.type != VEHICLE or not _visible(world, config):
+    if world.type != VEHICLE or len(world.xs) < 3 or not _visible(world, config):
         return []
     xs = _smooth(world.xs, config.smooth_window)
     velocity = np.gradient(xs, world.times)
