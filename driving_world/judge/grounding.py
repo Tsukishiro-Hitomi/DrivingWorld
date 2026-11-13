@@ -310,8 +310,18 @@ def grounded_check(
     """Run the grounded judge end-to-end for one video against one actor.
 
     ``tracker`` is any object exposing ``track(video) -> Trajectory``, e.g. a
-    :class:`ColorTracker` for proxies or a detection tracker for renders.
+    :class:`ColorTracker` for proxies or a detection tracker for renders. If the
+    tracker exposes a ``seed`` attribute, it is seeded with the GT's first
+    visible image position so multi-object scenes resolve to the right subject.
     """
     gt = gt_track(scene, actor_id)
+    seed_attr = getattr(tracker, "seed", None)
+    if seed_attr is None and hasattr(tracker, "seed"):
+        visible = np.nonzero(gt.visible())[0]
+        if visible.size:
+            tracker.seed = (
+                float(gt.image[visible[0], 0]),
+                float(gt.image[visible[0], 1]),
+            )
     tracked = tracker.track(video)
     return evaluate(tracked, event, gt, config=config)

@@ -30,6 +30,11 @@ class SubjectTracker(Protocol):
     def track(self, video: Path) -> Trajectory: ...
 
 
+def _center(box: tuple[float, float, float, float]) -> np.ndarray:
+    x1, y1, x2, y2 = box
+    return np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=float)
+
+
 class ColorTracker:
     """Track a subject by matching its render color (proxy domain)."""
 
@@ -61,11 +66,13 @@ class DetectionTracker:
         sample_step: int = 6,
         gate_px: float = 100.0,
         min_score: float = 0.3,
+        seed: tuple[float, float] | None = None,
     ) -> None:
         self.detector = detector
         self.sample_step = sample_step
         self.gate_px = gate_px
         self.min_score = min_score
+        self.seed = seed
 
     def track(self, video: Path) -> Trajectory:
         import imageio.v3 as iio  # lazy import keeps the module importable bare
@@ -76,6 +83,7 @@ class DetectionTracker:
         if fps <= 0 or not frames:
             raise ValueError(f"cannot decode video frames and FPS from {video}")
 
+        seed = np.asarray(self.seed, dtype=float) if self.seed is not None else None
         centers: dict[int, tuple[float, float]] = {}
         for index in range(0, len(frames), self.sample_step):
             detections = [
@@ -85,8 +93,13 @@ class DetectionTracker:
             ]
             if not detections:
                 continue
-            (x1, y1, x2, y2), _ = max(detections, key=lambda item: item[1])
-            centers[index] = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+            if seed is not None and not centers:
+                box, _ = min(
+                    detections, key=lambda item: np.linalg.norm(_center(item[0]) - seed)
+                )
+            else:
+                box, _ = max(detections, key=lambda item: item[1])
+            centers[index] = _center(box)
 
         points = self._associate_and_interpolate(len(frames), centers)
         times = np.arange(len(frames), dtype=float) / fps

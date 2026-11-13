@@ -6,9 +6,13 @@ import re
 
 from PIL import Image
 
-# Qwen2.5-VL emits grounded boxes as ``(x1,y1),(x2,y2)`` on a 1000x1000 grid,
-# optionally wrapped in ``<|box_start|>`` / ``<|box_end|>`` markers.
-_BOX_RE = re.compile(
+# Qwen2.5-VL emits grounded boxes either as a JSON list of ``bbox_2d`` (absolute
+# pixel coordinates) or as ``<|box_start|>(x1,y1),(x2,y2)<|box_end|>`` on a
+# 1000x1000 grid. Both are parsed and returned as ``(bbox_xyxy, score)``.
+_BBOX_2D_RE = re.compile(
+    r'"bbox_2d"\s*:\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\]'
+)
+_BOX_START_RE = re.compile(
     r"\((\d+(?:\.\d+)?),(\d+(?:\.\d+)?)\),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)\)"
 )
 _GRID = 1000.0
@@ -35,10 +39,7 @@ class Qwen25VLDetector:
         ).eval()
 
     def _prompt(self) -> str:
-        return (
-            f"Locate the {self.subject}. If it is visible, output its bounding box as "
-            "<|box_start|>(x1,y1),(x2,y2)<|box_end|>; if it is not visible, output NONE."
-        )
+        return f"Detect the {self.subject} in the image and output its bounding box."
 
     def detect(self, image: Image.Image) -> list[tuple[tuple[float, float, float, float], float]]:
         content = [
@@ -54,14 +55,19 @@ class Qwen25VLDetector:
             text=[text], images=[image], padding=True, return_tensors="pt"
         ).to(self.device)
         with self._torch.inference_mode():
-            output = self.model.generate(**inputs, max_new_tokens=128, do_sample=False)
+            output = self.model.generate(**inputs, max_new_tokens=256, do_sample=False)
         raw = self.processor.batch_decode(
             output[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
         )[0]
 
         width, height = image.size
         boxes: list[tuple[tuple[float, float, float, float], float]] = []
-        for match in _BOX_RE.finditer(raw):
+        for match in _BBOX_2D_RE.finditer(raw):
+            x1, y1, x2, y2 = (float(value) for value in match.groups())
+            boxes.append(((x1, y1, x2, y2), 1.0))
+        if boxes:
+            return boxes
+        for match in _BOX_START_RE.finditer(raw):
             x1, y1, x2, y2 = (float(value) for value in match.groups())
             boxes.append(
                 (
