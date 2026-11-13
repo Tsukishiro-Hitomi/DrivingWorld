@@ -55,6 +55,7 @@ class ObjectChecker:
             video,
             proxy_video,
             event_window_seconds=tuple(event["time_window_seconds"]),
+            event_frames=16,
         )
         prompt = build_object_prompt(
             event, [frame.timestamp_seconds for frame in sample.frames]
