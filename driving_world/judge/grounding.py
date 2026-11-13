@@ -228,29 +228,24 @@ def evaluate(
             rationale="Too few detected frames to measure lateral motion.",
         )
 
-    y_valid = y_tr[valid]
-    t_valid = times[valid]
-    deltas = np.diff(y_valid)
-    abs_deltas = np.abs(deltas)
-    mid_times = (t_valid[:-1] + t_valid[1:]) / 2.0
-    in_window = (mid_times >= start) & (mid_times <= end)
-    total_travel = float(abs_deltas.sum())
-    window_travel = float(abs_deltas[in_window].sum())
-
     first, last = valid_indices[0], valid_indices[-1]
     net = float(y_tr[last] - y_tr[first])
-    motion_observed = total_travel >= config.motion_min_meters
+    motion_observed = abs(net) >= config.motion_min_meters
+
+    in_window_indices = np.nonzero(valid & window_mask)[0]
+    window_net = (
+        float(y_tr[in_window_indices[-1]] - y_tr[in_window_indices[0]])
+        if in_window_indices.size >= 2
+        else 0.0
+    )
 
     metrics.update(
         {
             "world_lateral_start_m": float(y_tr[first]),
             "world_lateral_end_m": float(y_tr[last]),
             "net_lateral_m": net,
-            "lateral_travel_total_m": total_travel,
-            "lateral_travel_window_m": window_travel,
-            "window_travel_fraction": (
-                window_travel / total_travel if total_travel > 0 else 0.0
-            ),
+            "window_net_m": window_net,
+            "window_net_fraction": (abs(window_net) / abs(net)) if abs(net) > 0 else 0.0,
         }
     )
 
@@ -258,10 +253,10 @@ def evaluate(
     timing_valid: bool | None = None
     if motion_observed:
         direction = event.get("direction")
-        if direction is not None and abs(net) >= config.motion_min_meters:
+        if direction is not None:
             expected_sign = 1.0 if direction == "right_to_left" else -1.0
             direction_correct = bool(net * expected_sign > 0)
-        timing_valid = bool(window_travel / total_travel >= config.timing_fraction)
+        timing_valid = bool(abs(window_net) >= config.timing_fraction * abs(net))
 
     target_y = 0.0  # ego_lane center for a lane change
     event_completed = bool(abs(y_tr[last] - target_y) <= config.completion_max_meters)
