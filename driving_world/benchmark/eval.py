@@ -41,9 +41,40 @@ def _load_model(model_path: str):
     return processor, model
 
 
-def sample_frames(video: Path, n: int = 12) -> list[Image.Image]:
+def sample_frames(
+    video: Path,
+    event_window: tuple[float, float] | None = None,
+    *,
+    event_frames: int = 12,
+    context_frames: int = 4,
+) -> list[Image.Image]:
+    """Sample frames densely inside the event window, plus a little context."""
+    metadata = iio.immeta(video, plugin="FFMPEG")
+    fps = float(metadata.get("fps", 10.0)) or 10.0
     frames = list(iio.imiter(video, plugin="FFMPEG"))
-    indices = sorted({round(i * (len(frames) - 1) / (n - 1)) for i in range(n)})
+    total = len(frames)
+    if total == 0:
+        raise ValueError(f"no frames in {video}")
+    if event_window is None:
+        count = event_frames + context_frames
+        indices = sorted({round(i * (total - 1) / (count - 1)) for i in range(count)})
+    else:
+        start, end = event_window
+        first = min(total - 1, max(0, round(start * fps)))
+        last = min(total - 1, max(0, round(end * fps)))
+        if last <= first:
+            last = min(total - 1, first + 1)
+        event_idx = sorted(
+            {
+                round(first + i * (last - first) / max(1, event_frames - 1))
+                for i in range(event_frames)
+            }
+        )
+        context = [max(0, first - k) for k in range(1, context_frames // 2 + 1)]
+        context += [
+            min(total - 1, last + k) for k in range(1, context_frames // 2 + 1)
+        ]
+        indices = sorted(set(event_idx + context))
     return [Image.fromarray(frames[i]) for i in indices]
 
 
@@ -74,7 +105,11 @@ def evaluate(model_path: str, manifest_path: Path) -> dict:
     rows = []
     for entry in manifest:
         video = manifest_path.parent / entry["video"]
-        images = sample_frames(video)
+        event_window = None
+        if entry["events"]:
+            event = entry["events"][0]
+            event_window = (event["clip_start_seconds"], event["clip_end_seconds"])
+        images = sample_frames(video, event_window)
         raw = _ask(processor, model, _prompt(), images)
         predicted = _parse(raw)
         labels = set(entry["labels"])
