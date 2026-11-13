@@ -16,6 +16,13 @@ import imageio.v2 as imageio
 import numpy as np
 from PIL import Image, ImageDraw
 
+from driving_world.geometry import (
+    Camera,
+    camera_pose,
+    interpolate_track as interpolate,
+    rotation,
+)
+
 EDGES = (
     (0, 1),
     (0, 2),
@@ -35,38 +42,6 @@ COLORS = {
     "pedestrian": (255, 100, 100),
     "cyclist": (255, 210, 60),
 }
-
-
-def rotation(yaw, pitch=0.0, roll=0.0):
-    """Return local-to-parent rotation Rz(yaw) Ry(pitch) Rx(roll)."""
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cr, sr = math.cos(roll), math.sin(roll)
-    return np.array(
-        [
-            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-            [-sp, cp * sr, cp * cr],
-        ]
-    )
-
-
-def interpolate(track, t):
-    """Interpolate position and yaw, holding endpoint poses outside the range."""
-    if not track:
-        raise ValueError("A track must contain at least one keyframe")
-    if t <= track[0]["t"]:
-        return np.array(track[0]["position"], dtype=float), track[0].get("yaw", 0.0)
-    for left, right in zip(track, track[1:]):
-        if t <= right["t"]:
-            alpha = (t - left["t"]) / (right["t"] - left["t"])
-            p = (1 - alpha) * np.array(left["position"]) + alpha * np.array(
-                right["position"]
-            )
-            y0, y1 = left.get("yaw", 0.0), right.get("yaw", 0.0)
-            delta = (y1 - y0 + math.pi) % (2 * math.pi) - math.pi
-            return p, y0 + alpha * delta
-    return np.array(track[-1]["position"], dtype=float), track[-1].get("yaw", 0.0)
 
 
 def validate(scene):
@@ -94,18 +69,13 @@ def validate(scene):
 
 
 def render(scene, t):
-    camera = scene["camera"]
-    width, height = camera["width"], camera["height"]
+    cam = Camera.from_dict(scene["camera"])
+    width, height = cam.width, cam.height
     image = Image.new("RGB", (width, height), (5, 9, 15))
     draw = ImageDraw.Draw(image)
     ego_pos, ego_yaw = interpolate(scene["ego"], t)
-    ego_rot = rotation(ego_yaw)
-    mount = np.array(camera.get("position", [0, 0, 1.5]), dtype=float)
-    camera_pos = ego_pos + ego_rot @ mount
-    camera_rot = ego_rot @ rotation(
-        camera.get("yaw", 0), camera.get("pitch", 0), camera.get("roll", 0)
-    )
-    focal = width / (2 * math.tan(math.radians(camera["fov_degrees"]) / 2))
+    camera_pos, camera_rot = camera_pose(ego_pos, ego_yaw, cam)
+    focal = cam.focal
 
     def line(a, b, color, line_width=1):
         # Clip line segments against the camera near plane before projection.
