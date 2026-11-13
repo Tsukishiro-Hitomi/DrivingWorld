@@ -156,6 +156,7 @@ def evaluate(
         "subject_visible_fraction": (
             float(visible[window_mask].mean()) if window_mask.any() else 0.0
         ),
+        "mean_gt_error_px": _mean_gt_error(tracked, gt, window_mask),
     }
 
     if not subject_visible:
@@ -244,10 +245,19 @@ def _trajectory_match(
     config: GroundedConfig,
 ) -> bool | None:
     """Mean pixel error between tracked and GT points inside the window."""
+    error = _mean_gt_error(tracked, gt, window_mask)
+    if error is None:
+        return None
+    return bool(error <= config.match_max_pixels)
+
+
+def _mean_gt_error(
+    tracked: Trajectory, gt: Trajectory | None, window_mask: np.ndarray
+) -> float | None:
     if gt is None:
         return None
     common = tracked.visible() & gt.visible() & window_mask
     if common.sum() < 2:
         return None
     error = np.linalg.norm(tracked.points[common] - gt.points[common], axis=1)
-    return bool(error.mean() <= config.match_max_pixels)
+    return float(error.mean())
