@@ -18,7 +18,6 @@ import numpy as np
 from .derive import DeriveConfig, derive_events
 from .waymo import (
     DEFAULT_FPS,
-    camera_tracks_from_frames,
     front_image,
     read_frames,
     world_tracks_from_frames,
@@ -91,9 +90,8 @@ def build(
         frames = read_frames(record)
         if not frames:
             continue
-        camera_tracks = camera_tracks_from_frames(frames, fps=fps)
         world_tracks = world_tracks_from_frames(frames, fps=fps)
-        events = derive_events(world_tracks, camera_tracks, DeriveConfig())
+        events = derive_events(world_tracks, DeriveConfig())
 
         for event in events:
             kind = event.kind

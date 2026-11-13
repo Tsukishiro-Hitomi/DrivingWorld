@@ -1,8 +1,9 @@
-"""Derive ground-truth driving events from Waymo tracks.
+"""Derive ground-truth driving events from Waymo 3D tracks.
 
 Maneuvers are measured in the *ego frame* (3D ``y`` is lateral relative to the
-ego, so ego turns do not look like lane changes), and each event is then gated
-on the subject's 2D camera-box area so it is actually visible to a VLM.
+ego, so ego turns do not look like lane changes). Visibility is estimated
+analytically from the camera focal length and the object's depth, so a subject
+is only labeled when it is large enough in the front camera to be judged.
 """
 
 from __future__ import annotations
@@ -20,30 +21,15 @@ _SUBJECT = {VEHICLE: "vehicle", PEDESTRIAN: "pedestrian", CYCLIST: "cyclist"}
 
 
 @dataclass(frozen=True)
-class CameraTrack:
-    """Per-frame 2D box of one object in the front camera (pixels)."""
-
-    track_id: str
-    type: int
-    times: np.ndarray  # (T,) seconds
-    us: np.ndarray  # (T,) box center x
-    vs: np.ndarray  # (T,) box center y
-    ws: np.ndarray  # (T,) box width (x extent)
-    hs: np.ndarray  # (T,) box height (y extent)
-
-    def area(self) -> np.ndarray:
-        return self.ws * self.hs
-
-
-@dataclass(frozen=True)
 class WorldTrack:
-    """Per-frame 3D position of one object in the ego frame (x forward, y left)."""
+    """Per-frame 3D track in the ego frame (x forward, y left) + visibility."""
 
     track_id: str
     type: int
     times: np.ndarray  # (T,) seconds
     xs: np.ndarray  # (T,) forward meters
     ys: np.ndarray  # (T,) left meters
+    apparent_px: np.ndarray  # (T,) estimated on-image height in pixels
 
     def subject_type(self) -> str:
         return _SUBJECT.get(self.type, "vehicle")
@@ -61,7 +47,7 @@ class Event:
 
 @dataclass(frozen=True)
 class DeriveConfig:
-    min_box_area_px: float = 800.0  # drop subjects too small/distant to judge
+    min_apparent_px: float = 30.0  # subject must be this large on screen
     lane_displacement_m: float = 2.5  # ego-frame lateral travel for a lane change
     max_maneuver_seconds: float = 5.0  # reject slow drifts longer than this
     margin_seconds: float = 0.6  # context required before/after a maneuver
@@ -93,14 +79,12 @@ def _interior_span(u: np.ndarray, min_shift: float) -> tuple[int, int] | None:
     return start, end
 
 
-def _visible(camera: CameraTrack | None, config: DeriveConfig) -> bool:
-    return camera is not None and float(np.median(camera.area())) >= config.min_box_area_px
+def _visible(world: WorldTrack, config: DeriveConfig) -> bool:
+    return float(np.median(world.apparent_px)) >= config.min_apparent_px
 
 
-def lane_change_events(
-    world: WorldTrack, camera: CameraTrack | None, config: DeriveConfig
-) -> list[Event]:
-    if world.type not in (VEHICLE, CYCLIST) or not _visible(camera, config):
+def lane_change_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
+    if world.type not in (VEHICLE, CYCLIST) or not _visible(world, config):
         return []
     ys = _smooth(world.ys, config.smooth_window)
     span = _interior_span(ys, config.lane_displacement_m)
@@ -126,10 +110,8 @@ def lane_change_events(
     ]
 
 
-def pedestrian_crossing_events(
-    world: WorldTrack, camera: CameraTrack | None, config: DeriveConfig
-) -> list[Event]:
-    if world.type != PEDESTRIAN or not _visible(camera, config):
+def pedestrian_crossing_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
+    if world.type != PEDESTRIAN or not _visible(world, config):
         return []
     ys = _smooth(world.ys, config.smooth_window)
     ahead = (world.xs > config.min_ahead_m) & (world.xs < config.crossing_max_ahead_m)
@@ -152,10 +134,8 @@ def pedestrian_crossing_events(
     ]
 
 
-def hard_brake_events(
-    world: WorldTrack, camera: CameraTrack | None, config: DeriveConfig
-) -> list[Event]:
-    if world.type != VEHICLE or not _visible(camera, config):
+def hard_brake_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
+    if world.type != VEHICLE or not _visible(world, config):
         return []
     xs = _smooth(world.xs, config.smooth_window)
     velocity = np.gradient(xs, world.times)
@@ -180,16 +160,12 @@ def hard_brake_events(
 
 
 def derive_events(
-    world_tracks: list[WorldTrack],
-    camera_tracks: list[CameraTrack],
-    config: DeriveConfig = DeriveConfig(),
+    world_tracks: list[WorldTrack], config: DeriveConfig = DeriveConfig()
 ) -> list[Event]:
-    """Detect every visible event across a clip's world and camera tracks."""
-    camera_by_id = {t.track_id: t for t in camera_tracks}
+    """Detect every visible event across a clip's world tracks."""
     events: list[Event] = []
     for world in world_tracks:
-        camera = camera_by_id.get(world.track_id)
-        events.extend(lane_change_events(world, camera, config))
-        events.extend(pedestrian_crossing_events(world, camera, config))
-        events.extend(hard_brake_events(world, camera, config))
+        events.extend(lane_change_events(world, config))
+        events.extend(pedestrian_crossing_events(world, config))
+        events.extend(hard_brake_events(world, config))
     return sorted(events, key=lambda e: (e.start_seconds, e.kind))

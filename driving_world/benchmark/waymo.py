@@ -1,4 +1,4 @@
-"""TF-free Waymo tfrecord reading: front camera frames, 2D and 3D tracks."""
+"""TF-free Waymo tfrecord reading: front camera frames and 3D tracks."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .derive import CYCLIST, PEDESTRIAN, VEHICLE, CameraTrack, WorldTrack
+from .derive import CYCLIST, PEDESTRIAN, VEHICLE, WorldTrack
 
 CAM_FRONT = 1
 DEFAULT_FPS = 10.0
@@ -54,51 +54,19 @@ def front_image(frame) -> np.ndarray | None:
     return None
 
 
-def camera_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[CameraTrack]:
-    """Build per-object 2D-box tracks from the CAM_FRONT camera labels."""
-    points: dict[str, list[tuple[float, float, float, float, float]]] = defaultdict(list)
-    types: dict[str, int] = {}
-    for index, frame in enumerate(frames):
-        t = index / fps
-        for camera in frame.camera_labels:
-            if int(camera.name) != CAM_FRONT:
-                continue
-            for label in camera.labels:
-                type_ = int(label.type)
-                if type_ not in (VEHICLE, PEDESTRIAN, CYCLIST):
-                    continue
-                track_id = str(label.id)
-                types[track_id] = type_
-                points[track_id].append(
-                    (
-                        t,
-                        float(label.box.center_x),
-                        float(label.box.center_y),
-                        float(label.box.length),
-                        float(label.box.width),
-                    )
-                )
-
-    tracks = []
-    for track_id, track_points in points.items():
-        times, us, vs, ws, hs = zip(*track_points)
-        tracks.append(
-            CameraTrack(
-                track_id,
-                types[track_id],
-                np.asarray(times, dtype=float),
-                np.asarray(us, dtype=float),
-                np.asarray(vs, dtype=float),
-                np.asarray(ws, dtype=float),
-                np.asarray(hs, dtype=float),
-            )
-        )
-    return tracks
+def front_focal(frames) -> float:
+    """Return the CAM_FRONT vertical focal length in pixels."""
+    for calibration in frames[0].context.camera_calibrations:
+        if int(calibration.name) == CAM_FRONT:
+            # intrinsic = [f_u, f_v, c_u, c_v, k1, k2, p1, p2, k3]
+            return float(calibration.intrinsic[1])
+    raise ValueError("no CAM_FRONT calibration in the record")
 
 
 def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrack]:
-    """Build per-object 3D tracks from the laser labels (ego frame)."""
-    points: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+    """Build per-object 3D tracks with an analytic on-image height estimate."""
+    focal = front_focal(frames)
+    points: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
     types: dict[str, int] = {}
     for index, frame in enumerate(frames):
         t = index / fps
@@ -108,13 +76,15 @@ def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrac
                 continue
             track_id = str(label.id)
             types[track_id] = type_
+            depth = max(1.0, float(np.hypot(label.box.center_x, label.box.center_y)))
+            apparent_px = focal * float(label.box.height) / depth
             points[track_id].append(
-                (t, float(label.box.center_x), float(label.box.center_y))
+                (t, float(label.box.center_x), float(label.box.center_y), apparent_px)
             )
 
     tracks = []
     for track_id, track_points in points.items():
-        times, xs, ys = zip(*track_points)
+        times, xs, ys, apparent = zip(*track_points)
         tracks.append(
             WorldTrack(
                 track_id,
@@ -122,6 +92,7 @@ def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrac
                 np.asarray(times, dtype=float),
                 np.asarray(xs, dtype=float),
                 np.asarray(ys, dtype=float),
+                np.asarray(apparent, dtype=float),
             )
         )
     return tracks
