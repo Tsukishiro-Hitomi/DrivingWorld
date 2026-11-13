@@ -48,6 +48,7 @@ class Event:
 @dataclass(frozen=True)
 class DeriveConfig:
     min_apparent_px: float = 30.0  # subject must be this large on screen
+    max_lateral_ratio: float = 0.47  # tan(half horizontal FOV); out-of-view gate
     lane_displacement_m: float = 2.5  # ego-frame lateral travel for a lane change
     max_maneuver_seconds: float = 5.0  # reject slow drifts longer than this
     margin_seconds: float = 0.6  # context required before/after a maneuver
@@ -80,7 +81,13 @@ def _interior_span(u: np.ndarray, min_shift: float) -> tuple[int, int] | None:
 
 
 def _visible(world: WorldTrack, config: DeriveConfig) -> bool:
-    return float(np.median(world.apparent_px)) >= config.min_apparent_px
+    if float(np.median(world.apparent_px)) < config.min_apparent_px:
+        return False
+    # Must be in front of the ego and inside the front camera's horizontal FOV.
+    forward = world.xs > 0
+    ratio = np.abs(world.ys) / np.maximum(world.xs, 1.0)
+    in_frame = forward & (ratio < config.max_lateral_ratio)
+    return float(np.mean(in_frame)) >= 0.5
 
 
 def lane_change_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
