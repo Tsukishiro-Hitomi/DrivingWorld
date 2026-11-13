@@ -1,4 +1,4 @@
-"""Unit tests for GT event derivation from object tracks."""
+"""Unit tests for GT event derivation from camera-label and world tracks."""
 
 from __future__ import annotations
 
@@ -8,26 +8,39 @@ from driving_world.benchmark.derive import (
     CYCLIST,
     PEDESTRIAN,
     VEHICLE,
+    CameraTrack,
     DeriveConfig,
-    Track,
+    WorldTrack,
     derive_events,
 )
 
 
-def _track(track_id, type_, times, xs, ys):
-    return Track(track_id, type_, np.asarray(times, dtype=float), np.asarray(xs, dtype=float), np.asarray(ys, dtype=float))
+def _camera_track(track_id, type_, times, us, *, area=5000.0):
+    vs = np.full_like(times, 500.0)
+    ws = np.full_like(times, np.sqrt(area))
+    hs = np.full_like(times, np.sqrt(area))
+    return CameraTrack(
+        track_id, type_, np.asarray(times, dtype=float),
+        np.asarray(us, dtype=float), vs, ws, hs,
+    )
 
 
-def _lane_change_y(times, start, end, y0, y1):
-    return np.interp(times, [start, end], [y0, y1])
+def _world_track(track_id, type_, times, xs, ys=0.0):
+    return WorldTrack(
+        track_id, type_, np.asarray(times, dtype=float),
+        np.asarray(xs, dtype=float), np.full_like(times, ys, dtype=float),
+    )
 
 
-def test_lane_change_detected():
+def _lane_change_u(times, start, end, u0, u1):
+    return np.interp(times, [start, end], [u0, u1])
+
+
+def test_lane_change_from_2d():
     times = np.arange(0, 8, 0.1)
-    ys = _lane_change_y(times, 2.0, 4.0, -3.5, 0.0)
-    xs = 20 + 5 * times  # moving ahead, ahead of ego
-    track = _track("v1", VEHICLE, times, xs, ys)
-    events = derive_events([track])
+    us = _lane_change_u(times, 2.0, 4.0, 600.0, 300.0)  # u decreases => right_to_left
+    track = _camera_track("v1", VEHICLE, times, us)
+    events = derive_events([track], [])
     kinds = [e.kind for e in events]
     assert "vehicle_lane_change" in kinds
     event = next(e for e in events if e.kind == "vehicle_lane_change")
@@ -36,35 +49,39 @@ def test_lane_change_detected():
 
 def test_no_lane_change_when_straight():
     times = np.arange(0, 8, 0.1)
-    track = _track("v1", VEHICLE, times, 20 + 5 * times, np.full_like(times, -3.5))
-    assert derive_events([track]) == []
+    track = _camera_track("v1", VEHICLE, times, np.full_like(times, 600.0))
+    assert derive_events([track], []) == []
 
 
-def test_pedestrian_crossing_detected():
+def test_small_box_ignored():
     times = np.arange(0, 8, 0.1)
-    # pedestrian starts on the right sidewalk and crosses to the left lane
-    ys = _lane_change_y(times, 2.0, 4.0, 4.0, -4.0)
-    xs = np.full_like(times, 12.0)  # ahead, stationary-ish
-    track = _track("p1", PEDESTRIAN, times, xs, ys)
-    events = derive_events([track])
-    kinds = [e.kind for e in events]
-    assert "pedestrian_crossing" in kinds
+    us = _lane_change_u(times, 2.0, 4.0, 600.0, 300.0)
+    track = _camera_track("v1", VEHICLE, times, us, area=100.0)  # too small/distant
+    assert derive_events([track], []) == []
 
 
-def test_hard_brake_detected():
+def test_pedestrian_crossing_from_2d():
     times = np.arange(0, 8, 0.1)
-    # forward distance plateaus around t=3 (speed drops to ~0)
+    us = _lane_change_u(times, 2.0, 4.0, 1000.0, 700.0)
+    track = _camera_track("p1", PEDESTRIAN, times, us)
+    events = derive_events([track], [])
+    assert any(e.kind == "pedestrian_crossing" for e in events)
+
+
+def test_hard_brake_from_world_speed():
+    times = np.arange(0, 8, 0.1)
     xs = 20 + 12 * times
-    xs[times > 3.0] = xs[times <= 3.0][-1]
-    track = _track("v1", VEHICLE, times, xs, np.full_like(times, -3.5))
-    events = derive_events([track])
-    kinds = [e.kind for e in events]
-    assert "vehicle_hard_brake" in kinds
+    xs[times > 3.0] = xs[times <= 3.0][-1]  # forward distance plateaus
+    world = _world_track("v1", VEHICLE, times, xs)
+    camera = _camera_track("v1", VEHICLE, times, np.full_like(times, 600.0))
+    events = derive_events([camera], [world])
+    assert any(e.kind == "vehicle_hard_brake" for e in events)
 
 
-def test_cyclist_lane_change_detected():
+def test_cyclist_lane_change():
     times = np.arange(0, 8, 0.1)
-    ys = _lane_change_y(times, 2.0, 4.0, 0.0, 3.5)
-    track = _track("c1", CYCLIST, times, 15 + 5 * times, ys)
-    events = derive_events([track])
-    assert any(e.kind == "vehicle_lane_change" for e in events)
+    us = _lane_change_u(times, 2.0, 4.0, 300.0, 600.0)  # u increases => left_to_right
+    track = _camera_track("c1", CYCLIST, times, us)
+    events = derive_events([track], [])
+    event = next(e for e in events if e.kind == "vehicle_lane_change")
+    assert event.direction == "left_to_right"

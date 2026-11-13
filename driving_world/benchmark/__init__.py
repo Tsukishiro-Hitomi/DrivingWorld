@@ -4,9 +4,10 @@ from .derive import (
     CYCLIST,
     PEDESTRIAN,
     VEHICLE,
+    CameraTrack,
     DeriveConfig,
     Event,
-    Track,
+    WorldTrack,
     derive_events,
 )
 
@@ -14,8 +15,9 @@ __all__ = [
     "CYCLIST",
     "PEDESTRIAN",
     "VEHICLE",
+    "CameraTrack",
     "DeriveConfig",
     "Event",
-    "Track",
+    "WorldTrack",
     "derive_events",
 ]

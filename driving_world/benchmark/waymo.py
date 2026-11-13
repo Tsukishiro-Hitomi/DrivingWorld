@@ -1,4 +1,4 @@
-"""TF-free Waymo tfrecord reading: front camera frames + object tracks."""
+"""TF-free Waymo tfrecord reading: front camera frames, 2D and 3D tracks."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .derive import CYCLIST, PEDESTRIAN, VEHICLE, Track
+from .derive import CYCLIST, PEDESTRIAN, VEHICLE, CameraTrack, WorldTrack
 
 CAM_FRONT = 1
 DEFAULT_FPS = 10.0
@@ -54,8 +54,50 @@ def front_image(frame) -> np.ndarray | None:
     return None
 
 
-def tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[Track]:
-    """Build per-object tracks from the 3D laser labels."""
+def camera_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[CameraTrack]:
+    """Build per-object 2D-box tracks from the CAM_FRONT camera labels."""
+    points: dict[str, list[tuple[float, float, float, float, float]]] = defaultdict(list)
+    types: dict[str, int] = {}
+    for index, frame in enumerate(frames):
+        t = index / fps
+        for camera in frame.camera_labels:
+            if int(camera.name) != CAM_FRONT:
+                continue
+            for label in camera.labels:
+                type_ = int(label.type)
+                if type_ not in (VEHICLE, PEDESTRIAN, CYCLIST):
+                    continue
+                track_id = str(label.id)
+                types[track_id] = type_
+                points[track_id].append(
+                    (
+                        t,
+                        float(label.box.center_x),
+                        float(label.box.center_y),
+                        float(label.box.length),
+                        float(label.box.width),
+                    )
+                )
+
+    tracks = []
+    for track_id, track_points in points.items():
+        times, us, vs, ws, hs = zip(*track_points)
+        tracks.append(
+            CameraTrack(
+                track_id,
+                types[track_id],
+                np.asarray(times, dtype=float),
+                np.asarray(us, dtype=float),
+                np.asarray(vs, dtype=float),
+                np.asarray(ws, dtype=float),
+                np.asarray(hs, dtype=float),
+            )
+        )
+    return tracks
+
+
+def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrack]:
+    """Build per-object 3D tracks from the laser labels (ego frame)."""
     points: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
     types: dict[str, int] = {}
     for index, frame in enumerate(frames):
@@ -69,7 +111,17 @@ def tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[Track]:
             points[track_id].append(
                 (t, float(label.box.center_x), float(label.box.center_y))
             )
-    return [
-        Track.from_points(track_id, types[track_id], track_points)
-        for track_id, track_points in points.items()
-    ]
+
+    tracks = []
+    for track_id, track_points in points.items():
+        times, xs, ys = zip(*track_points)
+        tracks.append(
+            WorldTrack(
+                track_id,
+                types[track_id],
+                np.asarray(times, dtype=float),
+                np.asarray(xs, dtype=float),
+                np.asarray(ys, dtype=float),
+            )
+        )
+    return tracks

@@ -16,7 +16,13 @@ import cv2
 import numpy as np
 
 from .derive import DeriveConfig, derive_events
-from .waymo import DEFAULT_FPS, front_image, read_frames, tracks_from_frames
+from .waymo import (
+    DEFAULT_FPS,
+    camera_tracks_from_frames,
+    front_image,
+    read_frames,
+    world_tracks_from_frames,
+)
 
 DEFAULT_TARGETS = {
     "vehicle_lane_change": 8,
@@ -85,8 +91,9 @@ def build(
         frames = read_frames(record)
         if not frames:
             continue
-        tracks = tracks_from_frames(frames, fps=fps)
-        events = derive_events(tracks, DeriveConfig())
+        tracks = camera_tracks_from_frames(frames, fps=fps)
+        world_tracks = world_tracks_from_frames(frames, fps=fps)
+        events = derive_events(tracks, world_tracks, DeriveConfig())
 
         for event in events:
             kind = event.kind
