@@ -22,13 +22,19 @@ _SUBJECT = {VEHICLE: "vehicle", PEDESTRIAN: "pedestrian", CYCLIST: "cyclist"}
 
 @dataclass(frozen=True)
 class WorldTrack:
-    """Per-frame 3D track in the ego frame (x forward, y left) + visibility."""
+    """Per-frame 3D track + visibility in the ego frame and road frame.
+
+    ``ys`` is left-lateral in the ego frame (used for "inside the ego lane"),
+    while ``ys_road`` is left-lateral in a road-aligned frame fixed at clip
+    start (used for lane changes, so the ego's own maneuvers do not count).
+    """
 
     track_id: str
     type: int
     times: np.ndarray  # (T,) seconds
     xs: np.ndarray  # (T,) forward meters
-    ys: np.ndarray  # (T,) left meters
+    ys: np.ndarray  # (T,) left meters (ego frame)
+    ys_road: np.ndarray  # (T,) road-aligned left meters
     apparent_px: np.ndarray  # (T,) estimated on-image height in pixels
 
     def subject_type(self) -> str:
@@ -91,9 +97,9 @@ def _visible(world: WorldTrack, config: DeriveConfig) -> bool:
 
 
 def lane_change_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
-    if world.type not in (VEHICLE, CYCLIST) or len(world.ys) < 3 or not _visible(world, config):
+    if world.type not in (VEHICLE, CYCLIST) or len(world.ys_road) < 3 or not _visible(world, config):
         return []
-    ys = _smooth(world.ys, config.smooth_window)
+    ys = _smooth(world.ys_road, config.smooth_window)
     span = _interior_span(ys, config.lane_displacement_m)
     if span is None:
         return []

@@ -64,11 +64,19 @@ def front_focal(frames) -> float:
 
 
 def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrack]:
-    """Build per-object 3D tracks with an analytic on-image height estimate."""
+    """Build per-object 3D tracks with ego/road lateral positions and visibility."""
     focal = front_focal(frames)
-    points: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+    poses = [
+        np.asarray(frame.pose.transform, dtype=np.float64).reshape(4, 4) for frame in frames
+    ]
+    origin = poses[0][:3, 3]
+    road_left = poses[0][:3, 1]
+    road_left = road_left / np.linalg.norm(road_left)
+
+    points: dict[str, list[tuple[float, float, float, float, float]]] = defaultdict(list)
     types: dict[str, int] = {}
     for index, frame in enumerate(frames):
+        pose = poses[index]
         t = index / fps
         for label in frame.laser_labels:
             type_ = int(label.type)
@@ -78,13 +86,23 @@ def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrac
             types[track_id] = type_
             depth = max(1.0, float(np.hypot(label.box.center_x, label.box.center_y)))
             apparent_px = focal * float(label.box.height) / depth
+            world = pose @ np.array(
+                [label.box.center_x, label.box.center_y, label.box.center_z, 1.0]
+            )
+            y_road = float(np.dot(world[:3] - origin, road_left))
             points[track_id].append(
-                (t, float(label.box.center_x), float(label.box.center_y), apparent_px)
+                (
+                    t,
+                    float(label.box.center_x),
+                    float(label.box.center_y),
+                    y_road,
+                    apparent_px,
+                )
             )
 
     tracks = []
     for track_id, track_points in points.items():
-        times, xs, ys, apparent = zip(*track_points)
+        times, xs, ys, ys_road, apparent = zip(*track_points)
         tracks.append(
             WorldTrack(
                 track_id,
@@ -92,6 +110,7 @@ def world_tracks_from_frames(frames, fps: float = DEFAULT_FPS) -> list[WorldTrac
                 np.asarray(times, dtype=float),
                 np.asarray(xs, dtype=float),
                 np.asarray(ys, dtype=float),
+                np.asarray(ys_road, dtype=float),
                 np.asarray(apparent, dtype=float),
             )
         )

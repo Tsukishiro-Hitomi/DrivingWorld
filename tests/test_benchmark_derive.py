@@ -14,10 +14,12 @@ from driving_world.benchmark.derive import (
 )
 
 
-def _world_track(track_id, type_, times, xs, ys, *, apparent=100.0):
+def _world_track(track_id, type_, times, xs, ys, *, ys_road=None, apparent=100.0):
+    ys_road = ys if ys_road is None else ys_road
     return WorldTrack(
         track_id, type_, np.asarray(times, dtype=float),
         np.asarray(xs, dtype=float), np.asarray(ys, dtype=float),
+        np.asarray(ys_road, dtype=float),
         np.full_like(times, apparent, dtype=float),
     )
 
@@ -40,6 +42,16 @@ def test_lane_change_from_world_y():
 def test_no_lane_change_when_straight():
     times = np.arange(0, 8, 0.1)
     world = _world_track("v1", VEHICLE, times, 20 + 6 * times, np.full_like(times, -3.5))
+    assert derive_events([world]) == []
+
+
+def test_ego_motion_does_not_create_lane_change():
+    # Ego-frame y shifts (the ego is changing lanes) but road-frame y is constant.
+    times = np.arange(0, 8, 0.1)
+    ys_ego = _interp(times, 2.0, 4.0, -3.5, 0.0)
+    world = _world_track(
+        "v1", VEHICLE, times, 20 + 6 * times, ys_ego, ys_road=np.zeros_like(times)
+    )
     assert derive_events([world]) == []
 
 
