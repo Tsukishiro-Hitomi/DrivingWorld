@@ -64,6 +64,7 @@ class Event:
 class DeriveConfig:
     min_box_area_px: float = 800.0  # drop objects too small/distant to judge
     min_lateral_shift_px: float = 80.0  # lateral travel that counts as a maneuver
+    max_maneuver_seconds: float = 5.0  # reject slow drifts longer than this
     margin_seconds: float = 0.6  # context required before/after a maneuver
     brake_speed_drop_mps: float = 3.0  # forward-speed drop that counts as braking
     brake_window_seconds: float = 2.0
@@ -102,8 +103,10 @@ def lateral_events(track: CameraTrack, config: DeriveConfig) -> list[Event]:
     if span is None:
         return []
     start, end = span
-    dt = float(track.times[end] - track.times[start])
+    duration = float(track.times[end] - track.times[start])
     margin = config.margin_seconds
+    if duration > config.max_maneuver_seconds:
+        return []
     if track.times[start] < margin or track.times[-1] - track.times[end] < margin:
         return []
     direction = "right_to_left" if u[end] < u[start] else "left_to_right"

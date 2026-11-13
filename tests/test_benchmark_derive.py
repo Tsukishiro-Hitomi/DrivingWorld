@@ -60,6 +60,14 @@ def test_small_box_ignored():
     assert derive_events([track], []) == []
 
 
+def test_slow_drift_ignored():
+    # 100px over 12s is a gradual drift, not a lane change.
+    times = np.arange(0, 14, 0.1)
+    us = _lane_change_u(times, 1.0, 13.0, 600.0, 500.0)
+    track = _camera_track("v1", VEHICLE, times, us)
+    assert derive_events([track], []) == []
+
+
 def test_pedestrian_crossing_from_2d():
     times = np.arange(0, 8, 0.1)
     us = _lane_change_u(times, 2.0, 4.0, 1000.0, 700.0)
