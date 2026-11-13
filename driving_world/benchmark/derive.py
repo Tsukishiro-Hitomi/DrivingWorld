@@ -56,6 +56,7 @@ class DeriveConfig:
     min_apparent_px: float = 30.0  # subject must be this large on screen
     max_lateral_ratio: float = 0.47  # tan(half horizontal FOV); out-of-view gate
     lane_displacement_m: float = 2.5  # ego-frame lateral travel for a lane change
+    max_lane_displacement_m: float = 6.0  # a lane change is ~one lane, not a drift
     max_maneuver_seconds: float = 5.0  # reject slow drifts longer than this
     margin_seconds: float = 0.6  # context required before/after a maneuver
     crossing_max_lateral_m: float = 1.5  # |y| below this = inside the ego lane
@@ -104,8 +105,11 @@ def lane_change_events(world: WorldTrack, config: DeriveConfig) -> list[Event]:
     if span is None:
         return []
     start, end = span
+    span_shift = float(ys[end] - ys[start])
     duration = float(world.times[end] - world.times[start])
     margin = config.margin_seconds
+    if abs(span_shift) > config.max_lane_displacement_m:
+        return []
     if duration > config.max_maneuver_seconds:
         return []
     if world.times[start] < margin or world.times[-1] - world.times[end] < margin:
