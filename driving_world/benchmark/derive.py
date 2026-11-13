@@ -1,9 +1,8 @@
-"""Derive ground-truth driving events from Waymo camera-label tracks.
+"""Derive ground-truth driving events from Waymo tracks.
 
-Events are derived in *image space* from the 2D camera boxes so that a detected
-event is, by construction, visible in the front camera the VLM actually sees.
-Hard braking is the one exception: it is measured from 3D forward-speed and
-then required to have a visible 2D box.
+Maneuvers are measured in the *ego frame* (3D ``y`` is lateral relative to the
+ego, so ego turns do not look like lane changes), and each event is then gated
+on the subject's 2D camera-box area so it is actually visible to a VLM.
 """
 
 from __future__ import annotations
@@ -35,9 +34,6 @@ class CameraTrack:
     def area(self) -> np.ndarray:
         return self.ws * self.hs
 
-    def subject_type(self) -> str:
-        return _SUBJECT.get(self.type, "vehicle")
-
 
 @dataclass(frozen=True)
 class WorldTrack:
@@ -48,6 +44,9 @@ class WorldTrack:
     times: np.ndarray  # (T,) seconds
     xs: np.ndarray  # (T,) forward meters
     ys: np.ndarray  # (T,) left meters
+
+    def subject_type(self) -> str:
+        return _SUBJECT.get(self.type, "vehicle")
 
 
 @dataclass(frozen=True)
@@ -62,13 +61,15 @@ class Event:
 
 @dataclass(frozen=True)
 class DeriveConfig:
-    min_box_area_px: float = 800.0  # drop objects too small/distant to judge
-    min_lateral_shift_px: float = 80.0  # lateral travel that counts as a maneuver
+    min_box_area_px: float = 800.0  # drop subjects too small/distant to judge
+    lane_displacement_m: float = 2.5  # ego-frame lateral travel for a lane change
     max_maneuver_seconds: float = 5.0  # reject slow drifts longer than this
     margin_seconds: float = 0.6  # context required before/after a maneuver
-    brake_speed_drop_mps: float = 3.0  # forward-speed drop that counts as braking
-    brake_window_seconds: float = 2.0
+    crossing_max_lateral_m: float = 1.5  # |y| below this = inside the ego lane
+    crossing_max_ahead_m: float = 30.0  # pedestrians must intrude this close ahead
     min_ahead_m: float = 2.0
+    brake_speed_drop_mps: float = 3.0
+    brake_window_seconds: float = 2.0
     smooth_window: int = 3
 
 
@@ -79,115 +80,116 @@ def _smooth(values: np.ndarray, window: int) -> np.ndarray:
     return np.array([np.median(padded[i : i + window]) for i in range(len(values))])
 
 
-def _interior_span(u: np.ndarray, config: DeriveConfig) -> tuple[int, int] | None:
-    """Return (start, end) of the maneuver if it is interior and large enough."""
+def _interior_span(u: np.ndarray, min_shift: float) -> tuple[int, int] | None:
+    """Return (start, end) of the maneuver if interior and large enough."""
     total = float(u[-1] - u[0])
-    if abs(total) < config.min_lateral_shift_px:
+    if abs(total) < min_shift:
         return None
     cumulative = np.abs(u - u[0])
-    threshold = abs(total)
-    start = int(np.nonzero(cumulative >= 0.1 * threshold)[0][0])
-    end = int(np.nonzero(cumulative >= 0.9 * threshold)[0][0])
+    start = int(np.nonzero(cumulative >= 0.1 * abs(total))[0][0])
+    end = int(np.nonzero(cumulative >= 0.9 * abs(total))[0][0])
     if start <= 0 or end >= len(u) - 1:
         return None
     return start, end
 
 
-def lateral_events(track: CameraTrack, config: DeriveConfig) -> list[Event]:
-    if track.type not in (VEHICLE, PEDESTRIAN, CYCLIST) or len(track.us) < 5:
+def _visible(camera: CameraTrack | None, config: DeriveConfig) -> bool:
+    return camera is not None and float(np.median(camera.area())) >= config.min_box_area_px
+
+
+def lane_change_events(
+    world: WorldTrack, camera: CameraTrack | None, config: DeriveConfig
+) -> list[Event]:
+    if world.type not in (VEHICLE, CYCLIST) or not _visible(camera, config):
         return []
-    if float(np.median(track.area())) < config.min_box_area_px:
-        return []
-    u = _smooth(track.us, config.smooth_window)
-    span = _interior_span(u, config)
+    ys = _smooth(world.ys, config.smooth_window)
+    span = _interior_span(ys, config.lane_displacement_m)
     if span is None:
         return []
     start, end = span
-    duration = float(track.times[end] - track.times[start])
+    duration = float(world.times[end] - world.times[start])
     margin = config.margin_seconds
     if duration > config.max_maneuver_seconds:
         return []
-    if track.times[start] < margin or track.times[-1] - track.times[end] < margin:
+    if world.times[start] < margin or world.times[-1] - world.times[end] < margin:
         return []
-    direction = "right_to_left" if u[end] < u[start] else "left_to_right"
-    kind = (
-        "vehicle_lane_change"
-        if track.type in (VEHICLE, CYCLIST)
-        else "pedestrian_crossing"
-    )
+    direction = "right_to_left" if ys[end] > ys[start] else "left_to_right"
     return [
         Event(
-            kind=kind,
-            track_id=track.track_id,
-            subject_type=track.subject_type(),
-            start_seconds=float(track.times[start]),
-            end_seconds=float(track.times[end]),
+            kind="vehicle_lane_change",
+            track_id=world.track_id,
+            subject_type=world.subject_type(),
+            start_seconds=float(world.times[start]),
+            end_seconds=float(world.times[end]),
             direction=direction,
         )
     ]
 
 
-def hard_brake_events(track: WorldTrack, config: DeriveConfig) -> list[Event]:
-    if track.type != VEHICLE or len(track.xs) < 5:
+def pedestrian_crossing_events(
+    world: WorldTrack, camera: CameraTrack | None, config: DeriveConfig
+) -> list[Event]:
+    if world.type != PEDESTRIAN or not _visible(camera, config):
         return []
-    xs = _smooth(track.xs, config.smooth_window)
-    velocity = np.gradient(xs, track.times)
-    events: list[Event] = []
-    for start in range(len(track.times)):
-        for end in range(start + 1, len(track.times)):
-            if track.times[end] - track.times[start] > config.brake_window_seconds:
+    ys = _smooth(world.ys, config.smooth_window)
+    ahead = (world.xs > config.min_ahead_m) & (world.xs < config.crossing_max_ahead_m)
+    in_lane = np.abs(ys) < config.crossing_max_lateral_m
+    intruding = ahead & in_lane
+    if intruding.sum() < 2:
+        return []
+    indices = np.nonzero(intruding)[0]
+    first, last = int(indices[0]), int(indices[-1])
+    direction = "right_to_left" if ys[first] > 0 else "left_to_right"
+    return [
+        Event(
+            kind="pedestrian_crossing",
+            track_id=world.track_id,
+            subject_type="pedestrian",
+            start_seconds=float(world.times[first]),
+            end_seconds=float(world.times[last]),
+            direction=direction,
+        )
+    ]
+
+
+def hard_brake_events(
+    world: WorldTrack, camera: CameraTrack | None, config: DeriveConfig
+) -> list[Event]:
+    if world.type != VEHICLE or not _visible(camera, config):
+        return []
+    xs = _smooth(world.xs, config.smooth_window)
+    velocity = np.gradient(xs, world.times)
+    for start in range(len(world.times)):
+        for end in range(start + 1, len(world.times)):
+            if world.times[end] - world.times[start] > config.brake_window_seconds:
                 break
-            ahead = float(track.xs[start:end].min()) > config.min_ahead_m
+            ahead = float(world.xs[start:end].min()) > config.min_ahead_m
             speed_drop = float(velocity[start] - velocity[end])
             if ahead and speed_drop >= config.brake_speed_drop_mps:
-                events.append(
+                return [
                     Event(
                         kind="vehicle_hard_brake",
-                        track_id=track.track_id,
+                        track_id=world.track_id,
                         subject_type="vehicle",
-                        start_seconds=float(track.times[start]),
-                        end_seconds=float(track.times[end]),
+                        start_seconds=float(world.times[start]),
+                        end_seconds=float(world.times[end]),
                         direction=None,
                     )
-                )
-                break
-    return _merge(events)
+                ]
+    return []
 
 
 def derive_events(
-    camera_tracks: list[CameraTrack],
     world_tracks: list[WorldTrack],
+    camera_tracks: list[CameraTrack],
     config: DeriveConfig = DeriveConfig(),
 ) -> list[Event]:
-    """Detect every visible event across a clip's camera and world tracks."""
+    """Detect every visible event across a clip's world and camera tracks."""
+    camera_by_id = {t.track_id: t for t in camera_tracks}
     events: list[Event] = []
-    for track in camera_tracks:
-        events.extend(lateral_events(track, config))
-    world_by_id = {t.track_id: t for t in world_tracks}
-    for track in camera_tracks:
-        world = world_by_id.get(track.track_id)
-        if world is not None and world.type == VEHICLE:
-            events.extend(hard_brake_events(world, config))
+    for world in world_tracks:
+        camera = camera_by_id.get(world.track_id)
+        events.extend(lane_change_events(world, camera, config))
+        events.extend(pedestrian_crossing_events(world, camera, config))
+        events.extend(hard_brake_events(world, camera, config))
     return sorted(events, key=lambda e: (e.start_seconds, e.kind))
-
-
-def _merge(events: list[Event]) -> list[Event]:
-    merged: list[Event] = []
-    for event in sorted(events, key=lambda e: (e.track_id, e.kind, e.start_seconds)):
-        if merged and (
-            merged[-1].track_id == event.track_id
-            and merged[-1].kind == event.kind
-            and event.start_seconds <= merged[-1].end_seconds
-        ):
-            previous = merged[-1]
-            merged[-1] = Event(
-                previous.kind,
-                previous.track_id,
-                previous.subject_type,
-                previous.start_seconds,
-                max(previous.end_seconds, event.end_seconds),
-                previous.direction or event.direction,
-            )
-        else:
-            merged.append(event)
-    return merged

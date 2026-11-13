@@ -91,9 +91,9 @@ def build(
         frames = read_frames(record)
         if not frames:
             continue
-        tracks = camera_tracks_from_frames(frames, fps=fps)
+        camera_tracks = camera_tracks_from_frames(frames, fps=fps)
         world_tracks = world_tracks_from_frames(frames, fps=fps)
-        events = derive_events(tracks, world_tracks, DeriveConfig())
+        events = derive_events(world_tracks, camera_tracks, DeriveConfig())
 
         for event in events:
             kind = event.kind
