@@ -296,3 +296,22 @@ def _match(mean_gt_error_m: float, config: GroundedConfig) -> bool | None:
     if math.isnan(mean_gt_error_m):
         return None
     return bool(mean_gt_error_m <= config.match_max_meters)
+
+
+def grounded_check(
+    video: Path,
+    scene: dict[str, Any],
+    event: EventSpec,
+    actor_id: str,
+    tracker: Any,
+    *,
+    config: GroundedConfig = GroundedConfig(),
+) -> GroundedResult:
+    """Run the grounded judge end-to-end for one video against one actor.
+
+    ``tracker`` is any object exposing ``track(video) -> Trajectory``, e.g. a
+    :class:`ColorTracker` for proxies or a detection tracker for renders.
+    """
+    gt = gt_track(scene, actor_id)
+    tracked = tracker.track(video)
+    return evaluate(tracked, event, gt, config=config)

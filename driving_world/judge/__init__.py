@@ -6,10 +6,12 @@ from .grounding import (
     GtTrack,
     Trajectory,
     evaluate,
+    grounded_check,
     gt_track,
     track_subject_by_color,
     track_subject_from_video,
 )
+from .tracking import ColorTracker, DetectionTracker, Detector, SubjectTracker
 
 __all__ = [
     "ObjectChecker",
@@ -20,23 +22,30 @@ __all__ = [
     "GtTrack",
     "Trajectory",
     "evaluate",
+    "grounded_check",
     "gt_track",
     "track_subject_by_color",
     "track_subject_from_video",
+    "ColorTracker",
+    "DetectionTracker",
+    "Detector",
+    "SubjectTracker",
+    "Qwen25VLDetector",
 ]
 
-# The VLM checker pulls in imageio + transformers, so it is loaded lazily to
-# keep the deterministic grounded checker importable without those dependencies.
-_OBJECT_EXPORTS = {
+# Heavy backends are loaded lazily so the deterministic core stays importable
+# without imageio, torch, or transformers.
+_LAZY_EXPORTS = {
     "ObjectChecker": ("object", "ObjectChecker"),
     "ObjectResult": ("object", "ObjectResult"),
     "write_result": ("object", "write_result"),
+    "Qwen25VLDetector": ("detect", "Qwen25VLDetector"),
 }
 
 
 def __getattr__(name: str):
-    if name in _OBJECT_EXPORTS:
-        module_name, attribute = _OBJECT_EXPORTS[name]
+    if name in _LAZY_EXPORTS:
+        module_name, attribute = _LAZY_EXPORTS[name]
         module = __import__(f"{__name__}.{module_name}", fromlist=[attribute])
         return getattr(module, attribute)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
