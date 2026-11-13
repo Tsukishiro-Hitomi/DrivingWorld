@@ -10,12 +10,12 @@ def build_object_prompt(event: EventSpec, sample_times: list[float]) -> str:
     """Ask for observed evidence against the proxy, never a repair or next action."""
     return f"""You are a strict event judge for a rendered driving video.
 
-Each supplied frame is a side-by-side pair: the LEFT half is the proxy
-(ground-truth) frame and the RIGHT half is the rendered H3 frame at the same
+Each supplied frame is a side-by-side pair: the LEFT half is the rendered H3
+frame and the RIGHT half is the proxy (ground-truth) frame at the same
 timestamp. The proxy is the reference the rendered video must reproduce.
 
 Determine whether the requested event is visibly present in the rendered
-(RIGHT) video and matches the proxy (LEFT). Do not infer motion between
+(LEFT) video and matches the proxy (RIGHT). Do not infer motion between
 frames. If occlusion, frame spacing, or image quality prevents a reliable
 conclusion, set the relevant check to null and use status "indeterminate".
 
@@ -24,8 +24,8 @@ Requested event:
 
 Frame timestamps in seconds: {', '.join(f'{time:.3f}' for time in sample_times)}.
 
-First reason step by step about what you observe in each frame pair. Then
-return exactly one JSON object (after your reasoning) with these exact keys:
+First give a concise analysis of what you observe. Then return exactly one JSON
+object (after your reasoning) with these exact keys:
 - event_id: copy the requested event_id
 - status: observed, partially_observed, not_observed, or indeterminate
 - confidence: number from 0 to 1

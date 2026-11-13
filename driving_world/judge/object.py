@@ -61,7 +61,7 @@ class ObjectChecker:
         )
         images = [
             (
-                f"t={frame.timestamp_seconds:.3f}s (left: proxy, right: rendered)",
+                f"t={frame.timestamp_seconds:.3f}s (left: rendered, right: proxy)",
                 side_by_side(frame.rendered, frame.proxy),
             )
             for frame in sample.frames

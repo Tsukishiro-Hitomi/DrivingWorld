@@ -51,7 +51,7 @@ class Qwen25VL:
             text=[text], images=image_list, padding=True, return_tensors="pt"
         ).to(self.device)
         with torch.inference_mode():
-            output = model.generate(**inputs, max_new_tokens=768, do_sample=False)
+            output = model.generate(**inputs, max_new_tokens=2048, do_sample=False)
         return processor.batch_decode(
             output[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
         )[0]
