@@ -31,7 +31,7 @@ object (after your reasoning) with these exact keys:
 - confidence: number from 0 to 1
 - observed_interval_seconds: [start, end] or null
 - checks: object with exactly {sorted(OBJECT_CHECK_NAMES)}; each value is true, false, or null
-- evidence_frame_indices: indexes from the supplied frame order
+- evidence_frame_indices: list of 0-based integer positions (0 to {len(sample_times) - 1}) of the supplied frames that support your conclusion (not timestamps)
 - rationale: concise description of directly visible evidence
 
 Use observed only when every check is true. Do not give repair instructions or select a next action."""
