@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .render import (
@@ -52,7 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "calibrate":
         videos = _videos(args.videos, args.limit)
         canonical = Canonical(fps=args.fps, height=args.height)
-        references = build_references(videos, canonical=canonical)
+
+        def report(done: int, total: int) -> None:
+            print(f"calibrated {done}/{total} clips", file=sys.stderr, flush=True)
+
+        references = build_references(videos, canonical=canonical, progress=report)
         write_references(args.out, references)
         print(
             json.dumps(

@@ -6,7 +6,7 @@ import json
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -260,6 +260,7 @@ def build_references(
     videos: Sequence[Path],
     probes: Sequence[Probe] | None = None,
     canonical: Canonical | None = Canonical(),
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, ReferenceDistribution]:
     """Measure real clips to build one empirical reference per render axis.
 
@@ -270,7 +271,7 @@ def build_references(
     active = tuple(probes) if probes is not None else DEFAULT_PROBES
     samples: dict[str, list[float]] = {probe.axis: [] for probe in active}
     decoded = 0
-    for video in videos:
+    for index, video in enumerate(videos, 1):
         _, frames = decode_video(Path(video), canonical=canonical)
         for probe in active:
             values = probe.measure(frames)
@@ -279,6 +280,8 @@ def build_references(
             warmup = int(getattr(probe, "warmup", 0))
             samples[probe.axis].extend(values[warmup:])
         decoded += 1
+        if progress is not None:
+            progress(index, len(videos))
     if decoded == 0:
         raise ValueError("no videos were decoded")
     return {
