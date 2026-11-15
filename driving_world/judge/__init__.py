@@ -32,6 +32,11 @@ __all__ = [
     "FlowTracker",
     "SubjectTracker",
     "Qwen25VLDetector",
+    "RenderChecker",
+    "RenderReport",
+    "build_references",
+    "score_series",
+    "write_render_report",
 ]
 
 # Heavy backends are loaded lazily so the deterministic core stays importable
@@ -41,6 +46,11 @@ _LAZY_EXPORTS = {
     "ObjectResult": ("object", "ObjectResult"),
     "write_result": ("object", "write_result"),
     "Qwen25VLDetector": ("detect", "Qwen25VLDetector"),
+    "RenderChecker": ("render", "RenderChecker"),
+    "RenderReport": ("render", "RenderReport"),
+    "build_references": ("render", "build_references"),
+    "score_series": ("render", "score_series"),
+    "write_render_report": ("render", "write_report"),
 }
 
 
