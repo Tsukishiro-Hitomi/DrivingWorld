@@ -32,6 +32,20 @@ class ReferenceDistributionTest(unittest.TestCase):
         self.assertEqual(reference.percentile(2), 50.0)
         self.assertEqual(reference.percentile(5), 100.0)
 
+    def test_two_sided_reference_rewards_the_middle_not_the_extreme(self) -> None:
+        reference = ReferenceDistribution.from_samples(
+            "sharpness", True, [1, 2, 3, 4, 5], two_sided=True
+        )
+        self.assertEqual(reference.percentile(3), 10.0)
+        self.assertEqual(reference.percentile(1), reference.percentile(5))
+        self.assertLess(reference.percentile(3), reference.percentile(5))
+        self.assertFalse(
+            ReferenceDistribution.from_dict(reference.to_dict()) is None
+        )
+        restored = ReferenceDistribution.from_dict(reference.to_dict())
+        self.assertTrue(restored.two_sided)
+        self.assertEqual(restored.percentile(5), reference.percentile(5))
+
     def test_percentile_is_raw_cdf_for_lower_is_better_reference(self) -> None:
         reference = ReferenceDistribution.from_samples("test", False, [1, 2, 3, 4])
         self.assertEqual(reference.percentile(0), 0.0)

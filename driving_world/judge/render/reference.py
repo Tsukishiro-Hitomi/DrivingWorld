@@ -17,6 +17,7 @@ class ReferenceDistribution:
     probe: str
     higher_is_better: bool
     samples: tuple[float, ...]
+    two_sided: bool = False
 
     def __post_init__(self) -> None:
         if not self.samples:
@@ -28,19 +29,34 @@ class ReferenceDistribution:
 
     @classmethod
     def from_samples(
-        cls, probe: str, higher_is_better: bool, samples: Iterable[float]
+        cls,
+        probe: str,
+        higher_is_better: bool,
+        samples: Iterable[float],
+        two_sided: bool = False,
     ) -> "ReferenceDistribution":
         """Build a validated reference distribution from raw measurements."""
-        return cls(probe, higher_is_better, tuple(samples))
+        return cls(probe, higher_is_better, tuple(samples), two_sided)
 
     def percentile(self, value: float) -> float:
-        """Return the empirical midrank percentile of a raw value."""
+        """Return the empirical midrank percentile of a raw value.
+
+        A two-sided axis asks how far the value sits from the middle of real
+        footage rather than how far above or below it is: a render that is
+        crisper than every real clip is as unlike real footage as one that is
+        blurrier.
+        """
         numeric = float(value)
         if not math.isfinite(numeric):
             raise ValueError("percentile value must be finite")
-        left = bisect_left(self.samples, numeric)
-        right = bisect_right(self.samples, numeric)
-        return 100.0 * (left + 0.5 * (right - left)) / len(self.samples)
+        samples = self.samples
+        if self.two_sided:
+            center = samples[len(samples) // 2]
+            numeric = abs(numeric - center)
+            samples = tuple(sorted(abs(sample - center) for sample in samples))
+        left = bisect_left(samples, numeric)
+        right = bisect_right(samples, numeric)
+        return 100.0 * (left + 0.5 * (right - left)) / len(samples)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this distribution to its versioned JSON shape."""
@@ -49,6 +65,7 @@ class ReferenceDistribution:
             "probe": self.probe,
             "higher_is_better": self.higher_is_better,
             "samples": list(self.samples),
+            "two_sided": self.two_sided,
         }
 
     @classmethod
@@ -63,7 +80,12 @@ class ReferenceDistribution:
         samples = data.get("samples")
         if not isinstance(samples, list):
             raise ValueError("samples must be a list")
-        return cls.from_samples(data["probe"], data["higher_is_better"], samples)
+        two_sided = data.get("two_sided", False)
+        if type(two_sided) is not bool:
+            raise ValueError("two_sided must be a boolean")
+        return cls.from_samples(
+            data["probe"], data["higher_is_better"], samples, two_sided
+        )
 
     @classmethod
     def load(cls, path: Path) -> "ReferenceDistribution":

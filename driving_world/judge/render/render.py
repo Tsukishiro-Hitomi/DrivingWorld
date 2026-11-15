@@ -316,7 +316,10 @@ def build_references(
         raise ValueError("no videos were decoded")
     return {
         probe.axis: ReferenceDistribution.from_samples(
-            probe.name, probe.higher_is_better, samples[probe.axis]
+            probe.name,
+            probe.higher_is_better,
+            samples[probe.axis],
+            two_sided=bool(getattr(probe, "two_sided", False)),
         )
         for probe in active
     }

@@ -66,6 +66,7 @@ class LaplacianSharpness:
     name = "laplacian_sharpness"
     axis = "imaging"
     higher_is_better = True
+    two_sided = True
     warmup = 0
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
