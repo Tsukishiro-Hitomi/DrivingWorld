@@ -72,9 +72,16 @@ class GtTrack:
 
 @dataclass(frozen=True)
 class GroundedConfig:
-    """World-meter thresholds for the deterministic checks."""
+    """World-meter thresholds for the deterministic checks.
 
-    motion_min_meters: float = 1.0  # lateral travel that counts as a maneuver
+    ``motion_min_meters`` and ``motion_max_meters`` bound a single lane change:
+    one lane is 3.5 m, so less travel is lane-keeping noise and much more travel
+    is a two-lane jump or a tracker latching onto another object. The band was
+    calibrated on PREVENTION's 221 annotated clips.
+    """
+
+    motion_min_meters: float = 1.8  # lateral travel that counts as a maneuver
+    motion_max_meters: float = 6.5  # above this, treat as a track glitch, not a maneuver
     completion_max_meters: float = 1.0  # |final y - target| for completion
     timing_fraction: float = 0.6  # fraction of lateral travel inside the window
     visible_fraction: float = 0.5  # fraction of window frames with a detection
@@ -237,6 +244,25 @@ def _image_space_metrics(
     }
 
 
+def _robust_medians(
+    y: np.ndarray, valid: np.ndarray, tail: int = 10
+) -> tuple[float, float]:
+    """Median of the leading and trailing run of visible frames (metres).
+
+    ``net`` used to be ``y[last] - y[first]``, so a single dropped frame or a
+    one-frame tracker glitch at either end could flip the verdict. Taking the
+    median of the first and last ``tail`` visible frames keeps the same units
+    while ignoring isolated bad frames. The two runs never overlap.
+    """
+    indices = np.nonzero(valid)[0]
+    if indices.size < 2:
+        return float("nan"), float("nan")
+    tail = min(tail, indices.size // 2)
+    head = indices[:tail]
+    end = indices[-tail:]
+    return float(np.median(y[head])), float(np.median(y[end]))
+
+
 def evaluate(
     tracked: Trajectory,
     event: EventSpec,
@@ -306,15 +332,12 @@ def evaluate(
         )
 
     first, last = valid_indices[0], valid_indices[-1]
-    net = float(y_tr[last] - y_tr[first])
-    motion_observed = abs(net) >= config.motion_min_meters
+    start_median, end_median = _robust_medians(y_tr, valid)
+    net = float(end_median - start_median)
+    motion_observed = config.motion_min_meters <= abs(net) <= config.motion_max_meters
 
-    in_window_indices = np.nonzero(valid & window_mask)[0]
-    window_net = (
-        float(y_tr[in_window_indices[-1]] - y_tr[in_window_indices[0]])
-        if in_window_indices.size >= 2
-        else 0.0
-    )
+    window_head, window_tail = _robust_medians(y_tr, valid & window_mask)
+    window_net = float(window_tail - window_head) if np.isfinite(window_tail) else 0.0
 
     metrics.update(
         {
@@ -336,7 +359,7 @@ def evaluate(
         timing_valid = bool(abs(window_net) >= config.timing_fraction * abs(net))
 
     target_y = 0.0  # ego_lane center for a lane change
-    event_completed = bool(abs(y_tr[last] - target_y) <= config.completion_max_meters)
+    event_completed = bool(abs(end_median - target_y) <= config.completion_max_meters)
 
     matches = _match(mean_gt_error_m, config)
     checks = {
@@ -350,7 +373,10 @@ def evaluate(
 
     if not motion_observed:
         status = "not_observed"
-        rationale = "Subject is present but does not move laterally in the event window."
+        if abs(net) > config.motion_max_meters:
+            rationale = "Lateral travel exceeds a single lane change; likely a tracker glitch."
+        else:
+            rationale = "Subject is present but does not move laterally in the event window."
     elif direction_correct is True and timing_valid is True and event_completed is True:
         status = "observed"
         rationale = "Subject performs the requested maneuver with the correct direction and timing."

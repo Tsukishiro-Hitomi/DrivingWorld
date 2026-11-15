@@ -99,6 +99,14 @@ def test_wrong_timing():
     assert result.checks["timing_valid"] is False
 
 
+def test_teleport_rejected_as_tracker_glitch():
+    # A tracker latching onto another object produces a many-lane jump; the
+    # upper motion bound must treat it as a glitch, not as an observed maneuver.
+    result = _run([(0, -3.5), (2, -3.5), (2.01, 12.0), (5, 12.0)])
+    assert result.status == "not_observed"
+    assert result.checks["motion_observed"] is False
+
+
 def test_gt_track_exposes_world_and_depth():
     gt = gt_track(_scene([(0, -3.5), (5, -3.5)]), "target_vehicle")
     assert gt.world.shape[1] == 3
