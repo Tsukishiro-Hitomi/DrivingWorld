@@ -41,6 +41,31 @@ judge.Judge (orchestrator)
 - Checks: `subject_visible`, `motion_observed`, `direction_correct`,
   `timing_valid`, `event_completed`, `matches_proxy_trajectory`.
 
+#### Deterministic path (implemented)
+
+`judge/grounding.py` answers the object question without a VLM: the scene
+already states the actor's 3D track and the camera, so the ground-truth box is
+projected into the render and compared against a tracked subject.
+
+| Tracker | Use | Cue |
+| --- | --- | --- |
+| `ColorTracker` | proxy video | the actor's render colour |
+| `FlowTracker` | H3 video | the projected GT box, then LK + RANSAC similarity |
+| `DetectionTracker` | H3 video, unknown subject | a detector plus centre association |
+
+`grounded_check` seeds the tracker with the ground-truth box on its first
+visible frame, so a multi-object scene resolves to the right actor and the
+photorealistic path needs neither a colour cue nor a detector.
+
+**Why image space.** Both videos share one camera, so ego rotation, pitch and
+perspective cancel when the two trajectories are compared. Only tracker drift
+remains — measured at **0.02–0.08 subject-widths** on real driving video, while
+a lane change moves about **1.8 widths**.
+
+`evaluate` reports the drift as `lateral_error_box_widths` and `width_ratio`
+alongside the world-metre metrics, so a tracker that silently wandered off the
+subject is auditable rather than trusted.
+
 ### RenderChecker (Render Error)
 
 - Input: H3 frames (proxy optional as a geometry reference).

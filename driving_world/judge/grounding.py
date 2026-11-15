@@ -23,16 +23,28 @@ from typing import Any, Sequence
 import numpy as np
 
 from driving_world.contracts.events import EventSpec, validate_event_spec
-from driving_world.geometry import Camera, camera_pose, interpolate_track
+from driving_world.geometry import (
+    Camera,
+    camera_pose,
+    interpolate_track,
+    project_points,
+    rotation,
+)
 
 
 @dataclass(frozen=True)
 class Trajectory:
-    """Per-frame 2D image positions; ``NaN`` marks an undetected frame."""
+    """Per-frame 2D image positions; ``NaN`` marks an undetected frame.
+
+    ``widths`` is the subject's apparent box width in pixels when the tracker
+    knows it. It lets the judge normalise a lateral offset by the subject's own
+    screen size, which is comparable across distances and scenes.
+    """
 
     times: np.ndarray  # (T,)
     points: np.ndarray  # (T, 2) in (u, v) image pixels
     fps: float
+    widths: np.ndarray | None = None  # (T,) apparent width in pixels
 
     def visible(self) -> np.ndarray:
         return ~np.isnan(self.points).any(axis=1)
@@ -40,13 +52,19 @@ class Trajectory:
 
 @dataclass(frozen=True)
 class GtTrack:
-    """One actor's ground-truth track projected into image and camera space."""
+    """One actor's ground-truth track projected into image and camera space.
+
+    ``boxes`` is the full projected 3D box per frame as ``(u, v, w, h)``. It is
+    the reference the tracker is seeded with and the scale the tracked lateral
+    offset is measured against.
+    """
 
     times: np.ndarray  # (T,)
     image: np.ndarray  # (T, 2) in (u, v); NaN behind the near plane
     world: np.ndarray  # (T, 3) in world (x, y, z)
     depth: np.ndarray  # (T,) camera-frame depth
     focal: float
+    boxes: np.ndarray | None = None  # (T, 4) as (u, v, w, h)
 
     def visible(self) -> np.ndarray:
         return ~np.isnan(self.image).any(axis=1)
@@ -84,12 +102,22 @@ def _find_actor(scene: dict[str, Any], actor_id: str) -> dict[str, Any]:
     raise ValueError(f"actor {actor_id!r} not found in scene")
 
 
+def _box_corners(position: np.ndarray, yaw: float, size: Sequence[float]) -> np.ndarray:
+    """The eight corners of an actor's box in world coordinates."""
+    half = np.asarray(size, dtype=float) / 2.0
+    signs = np.array(
+        [[sx, sy, sz] for sx in (-1.0, 1.0) for sy in (-1.0, 1.0) for sz in (-1.0, 1.0)]
+    )
+    return position + (signs * half) @ rotation(yaw).T
+
+
 def gt_track(scene: dict[str, Any], actor_id: str) -> GtTrack:
     """Project one actor's ground-truth 3D track to image and camera space."""
     camera = Camera.from_dict(scene["camera"])
     fps = float(scene["fps"])
     count = math.ceil(scene["duration"] * fps)
     actor = _find_actor(scene, actor_id)
+    size = actor.get("size")
     ego = scene["ego"]
     start = actor.get("start", 0.0)
     end = actor.get("end", scene["duration"])
@@ -97,21 +125,38 @@ def gt_track(scene: dict[str, Any], actor_id: str) -> GtTrack:
     image = np.full((count, 2), np.nan)
     world = np.full((count, 3), np.nan)
     depth = np.full((count,), np.nan)
+    boxes = np.full((count, 4), np.nan) if size is not None else None
     for index, t in enumerate(times):
         if not start <= t < end:
             continue
         ego_pos, ego_yaw = interpolate_track(ego, t)
-        position, _ = interpolate_track(actor["track"], t)
+        position, yaw = interpolate_track(actor["track"], t)
         world[index] = position
         camera_pos, camera_rot = camera_pose(ego_pos, ego_yaw, camera)
         p = camera_rot.T @ (position - camera_pos)
-        if p[0] >= camera.near:
-            depth[index] = p[0]
-            image[index] = (
-                camera.width / 2.0 - camera.focal * p[1] / p[0],
-                camera.height / 2.0 - camera.focal * p[2] / p[0],
+        if p[0] < camera.near:
+            continue
+        depth[index] = p[0]
+        image[index] = (
+            camera.width / 2.0 - camera.focal * p[1] / p[0],
+            camera.height / 2.0 - camera.focal * p[2] / p[0],
+        )
+        if boxes is not None:
+            uv, visible = project_points(
+                _box_corners(position, yaw, size), ego_pos, ego_yaw, camera
             )
-    return GtTrack(times=times, image=image, world=world, depth=depth, focal=camera.focal)
+            if visible.all():
+                low = uv.min(axis=0)
+                high = uv.max(axis=0)
+                boxes[index] = (low[0], low[1], high[0] - low[0], high[1] - low[1])
+    return GtTrack(
+        times=times,
+        image=image,
+        world=world,
+        depth=depth,
+        focal=camera.focal,
+        boxes=boxes,
+    )
 
 
 def track_subject_by_color(
@@ -151,14 +196,45 @@ def track_subject_from_video(
 
 
 def _world_lateral(tracked: Trajectory, gt: GtTrack) -> np.ndarray:
-    """Depth-corrected world-lateral ``y`` of the tracked subject (meters)."""
-    y_gt = gt.world[:, 1]
-    u_gt = gt.image[:, 0]
-    u_tr = tracked.points[:, 0]
+    """Depth-corrected world-lateral ``y`` of the tracked subject (meters).
+
+    Trimmed to the frames both sides share: a render whose length differs from
+    the scene duration must not crash the judge.
+    """
+    count = min(len(gt.world), len(tracked.points))
+    y_gt = gt.world[:count, 1]
+    u_gt = gt.image[:count, 0]
+    u_tr = tracked.points[:count, 0]
     y_tr = np.full_like(y_gt, np.nan)
-    common = gt.visible() & tracked.visible()
-    y_tr[common] = y_gt[common] + (u_gt[common] - u_tr[common]) * gt.depth[common] / gt.focal
+    common = gt.visible()[:count] & tracked.visible()[:count]
+    y_tr[common] = y_gt[common] + (u_gt[common] - u_tr[common]) * gt.depth[:count][common] / gt.focal
     return y_tr
+
+
+def _image_space_metrics(
+    tracked: Trajectory, gt: GtTrack, common: np.ndarray
+) -> dict[str, float]:
+    """Scale-free tracking audit: offset and size error in subject-widths.
+
+    Both frames of reference share one camera, so ego motion cancels here; what
+    is left is purely how far the tracker drifted from the ground-truth box.
+    """
+    if gt.boxes is None or tracked.widths is None or not common.any():
+        return {}
+    count = common.size
+    gt_width = gt.boxes[:count, 2][common]
+    tracked_width = tracked.widths[:count][common]
+    finite = np.isfinite(gt_width) & np.isfinite(tracked_width) & (gt_width > 0)
+    if not finite.any():
+        return {}
+    # Compare against the projected box centre, not the projected 3D centre: the
+    # tracker reports a bounding box, and under perspective its centre differs.
+    gt_box_center_u = gt.boxes[:count, 0][common] + gt_width / 2.0
+    offset = np.abs(tracked.points[:count, 0][common] - gt_box_center_u)
+    return {
+        "lateral_error_box_widths": float((offset[finite] / gt_width[finite]).mean()),
+        "width_ratio": float(np.median(tracked_width[finite] / gt_width[finite])),
+    }
 
 
 def evaluate(
@@ -195,6 +271,7 @@ def evaluate(
             float(tracked_visible[window_mask].mean()) if window_mask.any() else 0.0
         ),
     }
+    metrics.update(_image_space_metrics(tracked, gt, common))
 
     if not subject_visible:
         return GroundedResult(
@@ -298,6 +375,26 @@ def _match(mean_gt_error_m: float, config: GroundedConfig) -> bool | None:
     return bool(mean_gt_error_m <= config.match_max_meters)
 
 
+def _seed_tracker(tracker: Any, gt: GtTrack) -> None:
+    """Point the tracker at the subject before it starts.
+
+    A tracker that accepts a box gets the projected ground-truth box (and the
+    frame it came from); a centre-only tracker gets the first visible image
+    position. Without this, multi-object scenes resolve to the wrong subject.
+    """
+    visible = np.nonzero(gt.visible())[0]
+    if not visible.size:
+        return
+    first = int(visible[0])
+    if hasattr(tracker, "seed_box"):
+        if gt.boxes is not None and np.isfinite(gt.boxes[first]).all():
+            tracker.seed_box = tuple(float(v) for v in gt.boxes[first])
+            if hasattr(tracker, "seed_frame"):
+                tracker.seed_frame = first
+    elif hasattr(tracker, "seed"):
+        tracker.seed = (float(gt.image[first, 0]), float(gt.image[first, 1]))
+
+
 def grounded_check(
     video: Path,
     scene: dict[str, Any],
@@ -310,18 +407,10 @@ def grounded_check(
     """Run the grounded judge end-to-end for one video against one actor.
 
     ``tracker`` is any object exposing ``track(video) -> Trajectory``, e.g. a
-    :class:`ColorTracker` for proxies or a detection tracker for renders. If the
-    tracker exposes a ``seed`` attribute, it is seeded with the GT's first
-    visible image position so multi-object scenes resolve to the right subject.
+    :class:`ColorTracker` for proxies or a :class:`FlowTracker` for
+    photorealistic renders.
     """
     gt = gt_track(scene, actor_id)
-    seed_attr = getattr(tracker, "seed", None)
-    if seed_attr is None and hasattr(tracker, "seed"):
-        visible = np.nonzero(gt.visible())[0]
-        if visible.size:
-            tracker.seed = (
-                float(gt.image[visible[0], 0]),
-                float(gt.image[visible[0], 1]),
-            )
+    _seed_tracker(tracker, gt)
     tracked = tracker.track(video)
     return evaluate(tracked, event, gt, config=config)

@@ -92,6 +92,35 @@ def camera_pose(
     return camera_pos, camera_rot
 
 
+def project_points(
+    world_points: Sequence[Sequence[float]],
+    ego_position: Sequence[float],
+    ego_yaw: float,
+    camera: Camera,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project world points to ``(u, v)`` pixels.
+
+    Returns the ``(N, 2)`` image coordinates together with an ``(N,)`` mask that
+    is true where the point lies in front of the near plane; rejected rows are
+    ``NaN`` so callers cannot mistake them for a projection.
+    """
+    points = np.asarray(world_points, dtype=float).reshape(-1, 3)
+    camera_pos, camera_rot = camera_pose(ego_position, ego_yaw, camera)
+    local = (points - camera_pos) @ camera_rot
+    depth = local[:, 0]
+    visible = depth >= camera.near
+    safe = np.where(visible, depth, 1.0)
+    uv = np.stack(
+        (
+            camera.width / 2.0 - camera.focal * local[:, 1] / safe,
+            camera.height / 2.0 - camera.focal * local[:, 2] / safe,
+        ),
+        axis=-1,
+    )
+    uv[~visible] = np.nan
+    return uv, visible
+
+
 def project_point(
     world_point: Sequence[float],
     ego_position: Sequence[float],
@@ -99,11 +128,7 @@ def project_point(
     camera: Camera,
 ) -> tuple[float, float] | None:
     """Project a world point to ``(u, v)`` image pixels, or ``None`` behind camera."""
-    camera_pos, camera_rot = camera_pose(ego_position, ego_yaw, camera)
-    p = camera_rot.T @ (np.asarray(world_point, dtype=float) - camera_pos)
-    if p[0] < camera.near:
+    uv, visible = project_points([world_point], ego_position, ego_yaw, camera)
+    if not visible[0]:
         return None
-    return (
-        camera.width / 2.0 - camera.focal * p[1] / p[0],
-        camera.height / 2.0 - camera.focal * p[2] / p[0],
-    )
+    return float(uv[0, 0]), float(uv[0, 1])

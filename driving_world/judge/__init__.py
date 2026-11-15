@@ -11,7 +11,7 @@ from .grounding import (
     track_subject_by_color,
     track_subject_from_video,
 )
-from .tracking import ColorTracker, DetectionTracker, Detector, SubjectTracker
+from .tracking import ColorTracker, DetectionTracker, Detector, FlowTracker, SubjectTracker
 
 __all__ = [
     "ObjectChecker",
@@ -29,6 +29,7 @@ __all__ = [
     "ColorTracker",
     "DetectionTracker",
     "Detector",
+    "FlowTracker",
     "SubjectTracker",
     "Qwen25VLDetector",
 ]
