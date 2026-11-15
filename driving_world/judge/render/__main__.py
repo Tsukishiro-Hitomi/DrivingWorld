@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     calibrate.add_argument("--limit", type=int, default=None)
     calibrate.add_argument("--fps", type=float, default=10.0)
     calibrate.add_argument("--height", type=int, default=480)
+    calibrate.add_argument("--blur", type=float, default=2.0)
 
     check = commands.add_parser("check", help="score one video")
     check.add_argument("--video", type=Path, required=True)
@@ -48,11 +49,14 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--out", type=Path, default=None)
     check.add_argument("--fps", type=float, default=10.0)
     check.add_argument("--height", type=int, default=480)
+    check.add_argument("--blur", type=float, default=2.0)
 
     args = parser.parse_args(argv)
     if args.command == "calibrate":
         videos = _videos(args.videos, args.limit)
-        canonical = Canonical(fps=args.fps, height=args.height)
+        canonical = Canonical(
+            fps=args.fps, height=args.height, blur_radius=args.blur
+        )
 
         def report(done: int, total: int) -> None:
             print(f"calibrated {done}/{total} clips", file=sys.stderr, flush=True)
@@ -63,7 +67,11 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "videos": len(videos),
-                    "canonical": {"fps": canonical.fps, "height": canonical.height},
+                    "canonical": {
+                        "fps": canonical.fps,
+                        "height": canonical.height,
+                        "blur_radius": canonical.blur_radius,
+                    },
                     "axes": {
                         axis: {"probe": reference.probe, "samples": len(reference.samples)}
                         for axis, reference in references.items()
@@ -77,7 +85,9 @@ def main(argv: list[str] | None = None) -> int:
 
     checker = RenderChecker(
         load_references(args.references),
-        canonical=Canonical(fps=args.fps, height=args.height),
+        canonical=Canonical(
+            fps=args.fps, height=args.height, blur_radius=args.blur
+        ),
     )
     report = checker.check(args.video)
     if args.out is not None:

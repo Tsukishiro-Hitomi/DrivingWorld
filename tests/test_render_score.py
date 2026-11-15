@@ -94,7 +94,63 @@ class ScoreSeriesTest(unittest.TestCase):
         self.assertAlmostEqual(result.total, result.axes["imaging"].score)
 
 
+class MotionGateTest(unittest.TestCase):
+    def _references(self) -> dict:
+        return {
+            "imaging": ReferenceDistribution.from_samples(
+                "laplacian_sharpness", True, np.linspace(0.0, 500.0, 101)
+            ),
+            "temporal": ReferenceDistribution.from_samples(
+                "motion_compensated_residual", False, np.linspace(0.0, 0.1, 101)
+            ),
+            "motion": ReferenceDistribution.from_samples(
+                "motion_energy", True, np.linspace(0.005, 0.05, 101)
+            ),
+        }
+
+    def test_static_clip_refuses_to_judge_temporal_quality(self) -> None:
+        frames = np.full((40, 24, 32, 3), 128, dtype=np.uint8)
+        report = RenderChecker(self._references(), canonical=None).check_frames(
+            frames, fps=10.0
+        )
+        self.assertIsNotNone(report.motion)
+        self.assertTrue(report.motion["gated"])
+        self.assertNotIn("temporal", report.axes)
+        self.assertIn("temporal_indeterminate_low_motion", report.reasons)
+
+    def test_moving_clip_keeps_the_temporal_axis(self) -> None:
+        rng = np.random.default_rng(2)
+        base = rng.integers(0, 256, size=(24, 32, 3), dtype=np.uint8)
+        frames = np.stack([np.roll(base, step, axis=1) for step in range(40)])
+        report = RenderChecker(self._references(), canonical=None).check_frames(
+            frames, fps=10.0
+        )
+        self.assertFalse(report.motion["gated"])
+        self.assertIn("temporal", report.axes)
+
+
 class CanonicalTest(unittest.TestCase):
+    def test_blur_radius_changes_the_canonical_frames(self) -> None:
+        try:
+            import imageio.v3 as iio
+        except ImportError as exc:
+            self.skipTest(str(exc))
+        rng = np.random.default_rng(4)
+        frames = rng.integers(0, 256, size=(5, 40, 60, 3), dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "noisy.mp4"
+            iio.imwrite(video, frames, plugin="FFMPEG", fps=10)
+            sharp = decode_video(video, canonical=Canonical(fps=10.0, height=40, blur_radius=0.0))
+            blurred = decode_video(video, canonical=Canonical(fps=10.0, height=40, blur_radius=2.0))
+        self.assertNotEqual(
+            float(np.var(sharp[1][0].astype(np.float64))),
+            float(np.var(blurred[1][0].astype(np.float64))),
+        )
+        self.assertLess(
+            float(np.var(blurred[1][0].astype(np.float64))),
+            float(np.var(sharp[1][0].astype(np.float64))),
+        )
+
     def test_resamples_frame_rate_and_height_together(self) -> None:
         try:
             import imageio.v3 as iio
@@ -167,10 +223,13 @@ class CalibrationTest(unittest.TestCase):
             root = Path(directory)
             videos = self._videos(root)
             references = build_references(videos, canonical=SMALL)
-            self.assertEqual(set(references), {"imaging", "temporal", "structure"})
+            self.assertEqual(
+                set(references), {"imaging", "temporal", "structure", "motion"}
+            )
             self.assertEqual(len(references["imaging"].samples), 40)
             self.assertEqual(len(references["temporal"].samples), 38)
             self.assertEqual(len(references["structure"].samples), 38)
+            self.assertEqual(len(references["motion"].samples), 38)
 
             write_references(root / "refs", references)
             loaded = load_references(root / "refs")

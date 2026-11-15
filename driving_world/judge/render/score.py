@@ -27,6 +27,7 @@ class ScoreConfig:
     fail_below: float = 15.0
     warn_below: float = 35.0
     max_findings: int = 3
+    motion_floor: float = 10.0
 
 
 @dataclass(frozen=True)

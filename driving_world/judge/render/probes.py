@@ -20,7 +20,7 @@ class Probe(Protocol):
     """
 
     name: str
-    axis: Literal["imaging", "temporal", "structure"]
+    axis: Literal["imaging", "temporal", "structure", "motion"]
     higher_is_better: bool
     warmup: int
 
@@ -126,6 +126,31 @@ class StructuralWarpAgreement:
                 correlation = float(np.sum(left * right) / denominator)
                 agreement = 0.5 * (correlation + 1.0)
             values.append(float(np.clip(agreement, 0, 1)))
+        return values
+
+
+class MotionEnergy:
+    """Measure per-frame change without compensation; gates the temporal axis.
+
+    A near-static clip has almost no residual after motion compensation, which
+    would otherwise read as perfect temporal stability. This probe records how
+    much the picture actually changes, so scoring can refuse to judge temporal
+    quality when there is nothing moving to judge.
+    """
+
+    name = "motion_energy"
+    axis = "motion"
+    higher_is_better = True
+    warmup = 1
+
+    def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
+        if len(frames) == 0:
+            return []
+        values = [0.0]
+        for previous, current in zip(frames, frames[1:]):
+            left = _gray(previous)
+            right = _gray(current)
+            values.append(float(np.clip(np.mean(np.abs(left - right)) / 255.0, 0, 1)))
         return values
 
 

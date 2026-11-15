@@ -13,6 +13,7 @@ import numpy as np
 from .probes import (
     LaplacianSharpness,
     MotionCompensatedResidual,
+    MotionEnergy,
     Probe,
     StructuralWarpAgreement,
 )
@@ -23,7 +24,10 @@ DEFAULT_PROBES = (
     LaplacianSharpness(),
     MotionCompensatedResidual(),
     StructuralWarpAgreement(),
+    MotionEnergy(),
 )
+
+MOTION_AXIS = "motion"
 
 
 @dataclass(frozen=True)
@@ -38,20 +42,30 @@ class Canonical:
 
     fps: float = 10.0
     height: int = 480
+    blur_radius: float = 2.0
 
 
-def _resize(frames: Sequence[np.ndarray], height: int) -> list[np.ndarray]:
-    from PIL import Image
+def _normalize(
+    frames: Sequence[np.ndarray], height: int, blur_radius: float
+) -> list[np.ndarray]:
+    """Resize to one height and low-pass both sides to the same cutoff.
 
-    resized = []
+    Downsampling real 1280p footage already removes high frequencies that a
+    native 480p render still carries, so an explicit shared blur is what makes
+    the two comparable rather than merely the same size.
+    """
+    from PIL import Image, ImageFilter
+
+    normalized = []
     for frame in frames:
         image = Image.fromarray(np.asarray(frame, dtype=np.uint8))
-        if image.height == height:
-            resized.append(np.asarray(image))
-            continue
-        width = max(1, round(image.width * height / image.height))
-        resized.append(np.asarray(image.resize((width, height), Image.BILINEAR)))
-    return resized
+        if image.height != height:
+            width = max(1, round(image.width * height / image.height))
+            image = image.resize((width, height), Image.BILINEAR)
+        if blur_radius > 0:
+            image = image.filter(ImageFilter.BoxBlur(blur_radius))
+        normalized.append(np.asarray(image))
+    return normalized
 
 
 def _resample(frames: Sequence[np.ndarray], fps: float, target_fps: float) -> list[np.ndarray]:
@@ -85,7 +99,7 @@ def decode_video(
         raise ValueError("canonical fps and height must be positive")
     resampled = _resample(frames, fps, canonical.fps)
     effective_fps = canonical.fps if len(resampled) != len(frames) else fps
-    return effective_fps, _resize(resampled, canonical.height)
+    return effective_fps, _normalize(resampled, canonical.height, canonical.blur_radius)
 
 
 @dataclass(frozen=True)
@@ -105,6 +119,7 @@ class RenderReport:
     findings: tuple[dict, ...]
     reasons: tuple[str, ...]
     canonical: dict | None = None
+    motion: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the report and nested score records to JSON-compatible data."""
@@ -122,6 +137,7 @@ class RenderReport:
             "findings": list(self.findings),
             "reasons": list(self.reasons),
             "canonical": self.canonical,
+            "motion": self.motion,
         }
 
 
@@ -149,9 +165,9 @@ class RenderChecker:
         self, frames: Sequence[np.ndarray], *, fps: float, video: str = "<frames>"
     ) -> RenderReport:
         """Score already decoded frames so callers can avoid a second decode."""
-        series: dict[str, Sequence[float]] = {}
+        measured: dict[str, Sequence[float]] = {}
         for probe in self.probes:
-            if probe.axis in series:
+            if probe.axis in measured:
                 raise ValueError(f"multiple probes configured for axis: {probe.axis}")
             reference = self.references.get(probe.axis)
             if reference is not None and reference.higher_is_better != probe.higher_is_better:
@@ -161,8 +177,21 @@ class RenderChecker:
             values = probe.measure(frames)
             if len(values) != len(frames):
                 raise ValueError(f"probe {probe.name} returned the wrong number of values")
-            series[probe.axis] = values
-        clip = score_series(series, self.references, fps=fps, config=self.config)
+            measured[probe.axis] = values
+
+        reasons: list[str] = []
+        motion: dict | None = None
+        motion_values = measured.pop(MOTION_AXIS, None)
+        if motion_values is not None:
+            raw = float(np.median(np.asarray(motion_values, dtype=np.float64)))
+            reference = self.references.get(MOTION_AXIS)
+            percentile = reference.percentile(raw) if reference is not None else None
+            gated = percentile is not None and percentile < self.config.motion_floor
+            motion = {"raw": raw, "percentile": percentile, "gated": gated}
+            if gated:
+                measured.pop("temporal", None)
+                reasons.append("temporal_indeterminate_low_motion")
+        clip = score_series(measured, self.references, fps=fps, config=self.config)
         findings = self._findings(clip.axes)
         return RenderReport(
             schema_version=1,
@@ -176,12 +205,13 @@ class RenderChecker:
             total=clip.total,
             status=clip.status,
             findings=findings,
-            reasons=clip.reasons,
+            reasons=tuple(reasons) + clip.reasons,
             canonical=(
                 {"fps": self.canonical.fps, "height": self.canonical.height}
                 if self.canonical is not None
                 else None
             ),
+            motion=motion,
         )
 
     def _findings(self, axes: Mapping[str, AxisScore]) -> tuple[dict, ...]:
@@ -310,7 +340,7 @@ def load_references(directory: Path) -> dict[str, ReferenceDistribution]:
     references = {}
     for path in sorted(directory.glob("*.json")):
         axis = path.stem
-        if axis not in AXES:
+        if axis not in set(AXES) | {MOTION_AXIS}:
             raise ValueError(f"unexpected reference file for unknown axis: {path}")
         references[axis] = ReferenceDistribution.load(path)
     if not references:

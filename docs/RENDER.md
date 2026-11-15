@@ -22,6 +22,12 @@
 | `imaging` | 模糊、噪声、过曝、压缩块 | 帧内高频能量（Laplacian 方差）；可替换为 MUSIQ | 越高越好 |
 | `temporal` | 闪烁、抖动、顿帧、物体融化 | 全局运动补偿后的光度残差（相位相关 warp） | 越低越好 |
 | `structure` | 深度跳变、结构漂移、同一目标变样 | 相邻帧 warp 后的结构相似度；可替换为 DepthAnythingV2 + DINO | 越高越好 |
+| `motion` | 画面几乎不动（不是质量轴） | 未补偿的帧间灰度差 | 只做门控 |
+
+`motion` 不参与打分，只用来拒绝回答：近静止片段的补偿残差天然极小，会被误读成
+"时序稳定"。当 `motion` 百分位低于 `motion_floor`（默认 10）时，`temporal` 轴置为
+不可判定、从总分中剔除，`reasons` 记 `temporal_indeterminate_low_motion`。
+VBench 在评估 temporal flickering 前过滤静态视频，是同一件事。
 
 第 4 类"语义级 artifact"（融化、多出轮胎、路面文字乱码）不进主分：
 VLM 只负责解释和定位，不改分。理由：VLM 分不可复现、不可校准。
@@ -40,6 +46,8 @@ VLM 只负责解释和定位，不改分。理由：VLM 分不可复现、不可
 
 - 空间：双线性缩放到统一高度，宽度按原始长宽比
 - 时间：按最近邻重采样到 10fps；源帧率更慢时保留原帧率，不插帧
+- 频率：两侧统一施加 BoxBlur（默认半径 2）。真值从 1280p 下采样时已被低通，
+  H3 原生 480p 还带着高频；只对齐尺寸不对齐截止频率，imaging 与 structure 会被系统性压低
 
 `RenderReport.canonical` 记录本次使用的设置，两份报告只有 canonical 相同才可比。
 
@@ -78,6 +86,7 @@ status = "fail"  if any(axis_score < fail_below)      # 单轴 gate，宁可误�
 
 | 参数 | 默认 | 来源 |
 | --- | --- | --- |
+| `motion_floor` | 10 | 待 pilot 定 |
 | `fail_below` | 15 | 待 pilot 定 |
 | `warn_below` | 35 | 待 pilot 定 |
 
