@@ -14,6 +14,7 @@ from .probes import (
 )
 from .reference import ReferenceDistribution
 from .render import (
+    Canonical,
     RenderChecker,
     RenderReport,
     build_references,
@@ -35,6 +36,7 @@ from .windows import Window, build_windows
 __all__ = [
     "AXES",
     "AxisScore",
+    "Canonical",
     "ClipScore",
     "DepthConsistencyProbe",
     "LaplacianSharpness",

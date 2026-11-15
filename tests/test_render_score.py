@@ -9,15 +9,20 @@ from pathlib import Path
 import numpy as np
 
 from driving_world.judge.render import (
+    Canonical,
     ReferenceDistribution,
     RenderChecker,
     ScoreConfig,
     build_references,
     build_windows,
+    decode_video,
     load_references,
     score_series,
     write_references,
 )
+
+
+SMALL = Canonical(fps=10.0, height=40)
 
 
 class ReferenceDistributionTest(unittest.TestCase):
@@ -89,6 +94,27 @@ class ScoreSeriesTest(unittest.TestCase):
         self.assertAlmostEqual(result.total, result.axes["imaging"].score)
 
 
+class CanonicalTest(unittest.TestCase):
+    def test_resamples_frame_rate_and_height_together(self) -> None:
+        try:
+            import imageio.v3 as iio
+        except ImportError as exc:
+            self.skipTest(str(exc))
+        rng = np.random.default_rng(3)
+        base = rng.integers(0, 256, size=(80, 160, 3), dtype=np.uint8)
+        frames = np.stack([np.roll(base, step % 5, axis=1) for step in range(120)])
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "clip.mp4"
+            iio.imwrite(video, frames, plugin="FFMPEG", fps=24)
+            raw_fps, raw_frames = decode_video(video)
+            fps, decoded = decode_video(video, canonical=Canonical(fps=10.0, height=40))
+        self.assertAlmostEqual(raw_fps, 24.0)
+        self.assertEqual(len(raw_frames), 120)
+        self.assertAlmostEqual(fps, 10.0)
+        self.assertEqual(len(decoded), 50)
+        self.assertEqual(decoded[0].shape, (40, 80, 3))
+
+
 class RenderCheckerTest(unittest.TestCase):
     def test_end_to_end_is_deterministic(self) -> None:
         try:
@@ -112,7 +138,7 @@ class RenderCheckerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             video = Path(directory) / "render.mp4"
             iio.imwrite(video, frames, plugin="FFMPEG", fps=10)
-            checker = RenderChecker(references)
+            checker = RenderChecker(references, canonical=None)
             first = checker.check(video).to_dict()
             second = checker.check(video).to_dict()
         self.assertEqual(first, second)
@@ -140,7 +166,7 @@ class CalibrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             videos = self._videos(root)
-            references = build_references(videos)
+            references = build_references(videos, canonical=SMALL)
             self.assertEqual(set(references), {"imaging", "temporal", "structure"})
             self.assertEqual(len(references["imaging"].samples), 40)
             self.assertEqual(len(references["temporal"].samples), 38)
@@ -151,7 +177,7 @@ class CalibrationTest(unittest.TestCase):
             self.assertEqual(set(loaded), set(references))
             self.assertEqual(loaded["temporal"].samples, references["temporal"].samples)
 
-            report = RenderChecker(loaded).check(videos[0])
+            report = RenderChecker(loaded, canonical=SMALL).check(videos[0])
             self.assertIn(report.status, {"pass", "warn", "fail"})
             self.assertEqual(report.frame_count, 20)
 
@@ -169,7 +195,7 @@ class CalibrationTest(unittest.TestCase):
         frames = np.stack([np.roll(base, step % 3, axis=1) for step in range(80)])
         frames[20:40] = rng.integers(0, 256, size=(20, 16, 24, 3), dtype=np.uint8)
         report = RenderChecker(
-            references, config=ScoreConfig(warn_below=99.0)
+            references, config=ScoreConfig(warn_below=99.0), canonical=None
         ).check_frames(frames, fps=10.0)
         self.assertTrue(report.findings)
         for finding in report.findings:
@@ -190,14 +216,14 @@ class CalibrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             video = self._videos(root, count=1)[0]
-            references = build_references([video])
+            references = build_references([video], canonical=SMALL)
             references["temporal"] = ReferenceDistribution.from_samples(
                 references["temporal"].probe,
                 not references["temporal"].higher_is_better,
                 references["temporal"].samples,
             )
             with self.assertRaises(ValueError):
-                RenderChecker(references).check(video)
+                RenderChecker(references, canonical=SMALL).check(video)
 
 
 if __name__ == "__main__":

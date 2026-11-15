@@ -26,7 +26,47 @@ DEFAULT_PROBES = (
 )
 
 
-def decode_video(video: Path) -> tuple[float, list[np.ndarray]]:
+@dataclass(frozen=True)
+class Canonical:
+    """Decode settings that calibration and scoring must agree on.
+
+    Raw probes are sensitive to pixel scale and frame interval: a 480p H3 clip
+    and a 1280p reference clip differ by orders of magnitude in Laplacian
+    variance for exactly the same content. Both sides are therefore decoded to
+    one frame height and one frame rate before measurement.
+    """
+
+    fps: float = 10.0
+    height: int = 480
+
+
+def _resize(frames: Sequence[np.ndarray], height: int) -> list[np.ndarray]:
+    from PIL import Image
+
+    resized = []
+    for frame in frames:
+        image = Image.fromarray(np.asarray(frame, dtype=np.uint8))
+        if image.height == height:
+            resized.append(np.asarray(image))
+            continue
+        width = max(1, round(image.width * height / image.height))
+        resized.append(np.asarray(image.resize((width, height), Image.BILINEAR)))
+    return resized
+
+
+def _resample(frames: Sequence[np.ndarray], fps: float, target_fps: float) -> list[np.ndarray]:
+    """Pick nearest frames for `target_fps`; keep the source rate if it is slower."""
+    if fps <= target_fps + 1e-9 or target_fps <= 0:
+        return list(frames)
+    duration = len(frames) / fps
+    count = max(1, int(round(duration * target_fps)))
+    indices = [min(len(frames) - 1, int(round(index * fps / target_fps))) for index in range(count)]
+    return [frames[index] for index in dict.fromkeys(indices)]
+
+
+def decode_video(
+    video: Path, *, canonical: Canonical | None = None
+) -> tuple[float, list[np.ndarray]]:
     """Decode a video into its FPS and RGB frames, importing imageio on demand."""
     try:
         import imageio.v3 as iio
@@ -39,7 +79,13 @@ def decode_video(video: Path) -> tuple[float, list[np.ndarray]]:
     ]
     if fps <= 0 or not frames:
         raise ValueError(f"cannot decode video frames and FPS from {video}")
-    return fps, frames
+    if canonical is None:
+        return fps, frames
+    if canonical.fps <= 0 or canonical.height <= 0:
+        raise ValueError("canonical fps and height must be positive")
+    resampled = _resample(frames, fps, canonical.fps)
+    effective_fps = canonical.fps if len(resampled) != len(frames) else fps
+    return effective_fps, _resize(resampled, canonical.height)
 
 
 @dataclass(frozen=True)
@@ -58,6 +104,7 @@ class RenderReport:
     status: str
     findings: tuple[dict, ...]
     reasons: tuple[str, ...]
+    canonical: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the report and nested score records to JSON-compatible data."""
@@ -74,6 +121,7 @@ class RenderReport:
             "status": self.status,
             "findings": list(self.findings),
             "reasons": list(self.reasons),
+            "canonical": self.canonical,
         }
 
 
@@ -85,14 +133,16 @@ class RenderChecker:
         references: Mapping[str, ReferenceDistribution],
         probes: Sequence[Probe] | None = None,
         config: ScoreConfig = ScoreConfig(),
+        canonical: Canonical | None = Canonical(),
     ) -> None:
         self.references = dict(references)
         self.probes = tuple(probes) if probes is not None else DEFAULT_PROBES
         self.config = config
+        self.canonical = canonical
 
     def check(self, video: Path) -> RenderReport:
         """Decode and score one video without eagerly importing imageio."""
-        fps, frames = decode_video(video)
+        fps, frames = decode_video(video, canonical=self.canonical)
         return self.check_frames(frames, fps=fps, video=str(video))
 
     def check_frames(
@@ -127,6 +177,11 @@ class RenderChecker:
             status=clip.status,
             findings=findings,
             reasons=clip.reasons,
+            canonical=(
+                {"fps": self.canonical.fps, "height": self.canonical.height}
+                if self.canonical is not None
+                else None
+            ),
         )
 
     def _findings(self, axes: Mapping[str, AxisScore]) -> tuple[dict, ...]:
@@ -202,7 +257,9 @@ def write_report(destination: Path, report: RenderReport) -> None:
 
 
 def build_references(
-    videos: Sequence[Path], probes: Sequence[Probe] | None = None
+    videos: Sequence[Path],
+    probes: Sequence[Probe] | None = None,
+    canonical: Canonical | None = Canonical(),
 ) -> dict[str, ReferenceDistribution]:
     """Measure real clips to build one empirical reference per render axis.
 
@@ -214,7 +271,7 @@ def build_references(
     samples: dict[str, list[float]] = {probe.axis: [] for probe in active}
     decoded = 0
     for video in videos:
-        _, frames = decode_video(Path(video))
+        _, frames = decode_video(Path(video), canonical=canonical)
         for probe in active:
             values = probe.measure(frames)
             if len(values) != len(frames):

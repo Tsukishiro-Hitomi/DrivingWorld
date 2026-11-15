@@ -30,6 +30,19 @@ VLM 只负责解释和定位，不改分。理由：VLM 分不可复现、不可
 重后端（MUSIQ、RAFT、DepthAnything）惰性导入，缺失时抛 `ProbeUnavailable`，
 不影响确定性核心在无 torch 环境里导入和测试。
 
+## 解码归一化（必须做，否则百分位没有意义）
+
+实测两边的几何参数并不一致：Waymo 真值片段是 1920×1280 @ 10fps，H3 输出是 832×480 @ 24fps
+（部分实验是 448×256）。Laplacian 方差随像素尺度变化，帧间残差随帧间隔变化，
+直接比较会被这两个差异主导。
+
+所以标定和打分都必须先解码到同一个 `Canonical(fps=10.0, height=480)`：
+
+- 空间：双线性缩放到统一高度，宽度按原始长宽比
+- 时间：按最近邻重采样到 10fps；源帧率更慢时保留原帧率，不插帧
+
+`RenderReport.canonical` 记录本次使用的设置，两份报告只有 canonical 相同才可比。
+
 ## 窗口与聚合
 
 ```
@@ -127,6 +140,9 @@ python -m driving_world.judge.render calibrate --videos data/waymo_front --out r
 
 # 2. 给一条 H3 视频打分
 python -m driving_world.judge.render check --video out/h3.mp4 --references refs/
+
+# 两边都可以显式覆盖归一化设置（默认 10fps / 480p）
+python -m driving_world.judge.render calibrate --videos data/waymo_front --out refs/ --fps 10 --height 480
 ```
 
 ## 验收
