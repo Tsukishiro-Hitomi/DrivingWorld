@@ -19,6 +19,7 @@ from .probes import (
 )
 from .reference import ReferenceDistribution
 from .score import AXES, AxisScore, ScoreConfig, score_series
+from .windows import build_windows
 
 DEFAULT_PROBES = (
     LaplacianSharpness(),
@@ -291,24 +292,35 @@ def build_references(
     probes: Sequence[Probe] | None = None,
     canonical: Canonical | None = Canonical(),
     progress: Callable[[int, int], None] | None = None,
+    config: ScoreConfig = ScoreConfig(),
 ) -> dict[str, ReferenceDistribution]:
     """Measure real clips to build one empirical reference per render axis.
 
-    The first `warmup` frame of each probe is dropped: a probe that compares a
-    frame against its predecessor has no predecessor for frame zero, so keeping
-    those placeholders would bias the reference toward looking good.
+    Samples are window averages, not frames: scoring compares a window average
+    against this reference, and a frame-level reference is far more spread out,
+    so nearly every clip would land in its tail. Measuring both sides the same
+    way is what makes a percentile mean what it says.
     """
     active = tuple(probes) if probes is not None else DEFAULT_PROBES
     samples: dict[str, list[float]] = {probe.axis: [] for probe in active}
     decoded = 0
     for index, video in enumerate(videos, 1):
-        _, frames = decode_video(Path(video), canonical=canonical)
+        fps, frames = decode_video(Path(video), canonical=canonical)
         for probe in active:
             values = probe.measure(frames)
             if len(values) != len(frames):
                 raise ValueError(f"probe {probe.name} returned the wrong number of values")
-            warmup = int(getattr(probe, "warmup", 0))
-            samples[probe.axis].extend(values[warmup:])
+            windows = build_windows(
+                len(values),
+                fps,
+                window_seconds=config.window_seconds,
+                stride_seconds=config.stride_seconds,
+            )
+            numeric = np.asarray(values, dtype=np.float64)
+            samples[probe.axis].extend(
+                float(np.mean(numeric[list(window.frame_indices)]))
+                for window in windows
+            )
         decoded += 1
         if progress is not None:
             progress(index, len(videos))

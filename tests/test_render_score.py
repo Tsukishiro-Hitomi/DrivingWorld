@@ -232,7 +232,7 @@ class CalibrationTest(unittest.TestCase):
             paths.append(path)
         return paths
 
-    def test_calibration_drops_warmup_frames_and_round_trips(self) -> None:
+    def test_calibration_samples_window_averages_and_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             videos = self._videos(root)
@@ -240,10 +240,12 @@ class CalibrationTest(unittest.TestCase):
             self.assertEqual(
                 set(references), {"imaging", "temporal", "structure", "motion"}
             )
-            self.assertEqual(len(references["imaging"].samples), 40)
-            self.assertEqual(len(references["temporal"].samples), 38)
-            self.assertEqual(len(references["structure"].samples), 38)
-            self.assertEqual(len(references["motion"].samples), 38)
+            windows = build_windows(20, 10.0)
+            for axis, reference in references.items():
+                self.assertEqual(
+                    len(reference.samples), 2 * len(windows), f"{axis} sample count"
+                )
+                self.assertTrue(all(value == value for value in reference.samples))
 
             write_references(root / "refs", references)
             loaded = load_references(root / "refs")

@@ -14,15 +14,15 @@ class ProbeUnavailable(RuntimeError):
 class Probe(Protocol):
     """Interface implemented by per-frame render-quality probes.
 
-    `warmup` is the number of leading measurements that carry no evidence
-    (a first frame has no predecessor). Calibration drops them; scoring keeps
-    them so every measurement stays aligned with its frame.
+    A probe returns one value per input frame. Frame zero has no predecessor,
+    so pairwise probes report a neutral value there; calibration and scoring
+    aggregate over the same windows, so that neutral frame cancels out instead
+    of biasing one side.
     """
 
     name: str
     axis: Literal["imaging", "temporal", "structure", "motion"]
     higher_is_better: bool
-    warmup: int
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         """Return one raw measurement for every input frame."""
@@ -67,7 +67,6 @@ class LaplacianSharpness:
     axis = "imaging"
     higher_is_better = True
     two_sided = True
-    warmup = 0
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         values = []
@@ -91,7 +90,6 @@ class MotionCompensatedResidual:
     name = "motion_compensated_residual"
     axis = "temporal"
     higher_is_better = False
-    warmup = 1
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         if len(frames) == 0:
@@ -110,7 +108,6 @@ class StructuralWarpAgreement:
     name = "structural_warp_agreement"
     axis = "structure"
     higher_is_better = True
-    warmup = 1
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         if len(frames) == 0:
@@ -142,7 +139,6 @@ class MotionEnergy:
     name = "motion_energy"
     axis = "motion"
     higher_is_better = True
-    warmup = 1
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         if len(frames) == 0:
@@ -161,7 +157,6 @@ class MusiqProbe:
     name = "musiq"
     axis = "imaging"
     higher_is_better = True
-    warmup = 0
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         try:
@@ -185,7 +180,6 @@ class RaftWarpProbe:
     name = "raft_warp_residual"
     axis = "temporal"
     higher_is_better = False
-    warmup = 1
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         try:
@@ -201,7 +195,6 @@ class DepthConsistencyProbe:
     name = "depth_consistency"
     axis = "structure"
     higher_is_better = True
-    warmup = 1
 
     def measure(self, frames: Sequence[np.ndarray]) -> list[float]:
         try:
