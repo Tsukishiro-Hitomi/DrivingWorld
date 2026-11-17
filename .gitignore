@@ -7,13 +7,26 @@ __pycache__/
 models/
 model_cache/
 outputs/
-experiments/
 smoke-run
+
+# Experiments: records and scripts are tracked, media and bulk results are not.
+experiments/**
+!experiments/**/
+!experiments/**/*.md
+!experiments/**/*.py
 datasets/**/videos/
 datasets/**/reports/
 *.mp4
 *.mov
 *.avi
+
+# Local scratch: experiment artifacts pulled back from the dev machine
+local/
+.tmp_*
+draft_*/
+
+# Local logs
+*.log
 
 # Local environment files
 .env
